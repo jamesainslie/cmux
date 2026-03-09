@@ -13,6 +13,7 @@ final class MarkdownLifecycleUITests: XCTestCase {
         launchTag = "ui-tests-markdown-lifecycle-\(UUID().uuidString.prefix(8))"
         socketPath = "/tmp/cmux-debug-\(launchTag).sock"
         dataPath = "/tmp/cmux-ui-socket-sanity-\(launchTag).json"
+        LifecycleUITestSocketClient.setBundledCLIPathOverride(nil)
         try? FileManager.default.removeItem(atPath: socketPath)
         try? FileManager.default.removeItem(atPath: dataPath)
     }
@@ -47,6 +48,7 @@ final class MarkdownLifecycleUITests: XCTestCase {
         if let expectedSocketPath = socketState["socketExpectedPath"], !expectedSocketPath.isEmpty {
             socketPath = expectedSocketPath
         }
+        LifecycleUITestSocketClient.setBundledCLIPathOverride(socketState["bundledCLIPath"])
         XCTAssertEqual(socketState["socketReady"], "1", "Expected ready socket. state=\(socketState)")
         XCTAssertEqual(socketState["windowReady"], "1", "Expected ready current window. state=\(socketState)")
         XCTAssertEqual(socketState["surfaceReady"], "1", "Expected ready current surface. state=\(socketState)")

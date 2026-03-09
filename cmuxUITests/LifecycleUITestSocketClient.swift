@@ -3,6 +3,7 @@ import Darwin
 
 final class LifecycleUITestSocketClient {
     private let path: String
+    private static var bundledCLIPathOverride: String?
 
     private static let readinessAttempts = 12
     private static let readinessDelay: TimeInterval = 0.1
@@ -12,6 +13,11 @@ final class LifecycleUITestSocketClient {
 
     init(path: String) {
         self.path = path
+    }
+
+    static func setBundledCLIPathOverride(_ path: String?) {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        bundledCLIPathOverride = trimmed.isEmpty ? nil : trimmed
     }
 
     func call(method: String, params: [String: Any] = [:]) -> [String: Any]? {
@@ -310,6 +316,10 @@ final class LifecycleUITestSocketClient {
         let fileManager = FileManager.default
         var candidates: [String] = []
         let environment = ProcessInfo.processInfo.environment
+
+        if let override = Self.bundledCLIPathOverride {
+            candidates.append(override)
+        }
 
         if let override = environment["CMUX_UI_TEST_CLI_PATH"],
            !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

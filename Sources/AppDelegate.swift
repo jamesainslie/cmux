@@ -6904,6 +6904,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let config = socketListenerConfigurationIfEnabled() else {
             writeMultiWindowNotificationTestData([
                 "socketExpectedPath": env["CMUX_SOCKET_PATH"] ?? "",
+                "bundledCLIPath": currentBundledCLIPathForSocketSanity(),
                 "socketMode": "off",
                 "socketReady": "0",
                 "workspaceReady": "0",
@@ -6925,6 +6926,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         writeMultiWindowNotificationTestData([
             "socketExpectedPath": config.path,
+            "bundledCLIPath": currentBundledCLIPathForSocketSanity(),
             "socketMode": config.mode.rawValue,
             "socketReady": "pending",
             "workspaceReady": "pending",
@@ -6975,6 +6977,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     guard let self else { return }
                     self.writeMultiWindowNotificationTestData([
                         "socketExpectedPath": socketPath,
+                        "bundledCLIPath": self.currentBundledCLIPathForSocketSanity(),
                         "socketMode": socketMode,
                         "socketReady": isReady ? "1" : (isTimedOut ? "0" : "pending"),
                         "workspaceReady": workspaceReady ? "1" : (isTimedOut ? "0" : "pending"),
@@ -7029,6 +7032,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return focusedPanelId.uuidString
         }
         return ""
+    }
+
+    private func currentBundledCLIPathForSocketSanity() -> String {
+        guard let resourceURL = Bundle.main.resourceURL else { return "" }
+        let path = resourceURL.appendingPathComponent("bin/cmux").path
+        guard FileManager.default.isExecutableFile(atPath: path) else { return "" }
+        return path
     }
 
     private func currentLifecycleMutationReadyForSocketSanity(
