@@ -317,8 +317,7 @@ final class LifecycleUITestSocketClient {
         }
 
         if let builtProductsDir = environment["BUILT_PRODUCTS_DIR"], !builtProductsDir.isEmpty {
-            candidates.append("\(builtProductsDir)/cmux DEV.app/Contents/Resources/bin/cmux")
-            candidates.append("\(builtProductsDir)/cmux.app/Contents/Resources/bin/cmux")
+            candidates.append(contentsOf: bundledCLICandidates(under: URL(fileURLWithPath: builtProductsDir)))
         }
 
         if let testHost = environment["TEST_HOST"], !testHost.isEmpty {
@@ -329,8 +328,7 @@ final class LifecycleUITestSocketClient {
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .path
-            candidates.append("\(productsDir)/cmux DEV.app/Contents/Resources/bin/cmux")
-            candidates.append("\(productsDir)/cmux.app/Contents/Resources/bin/cmux")
+            candidates.append(contentsOf: bundledCLICandidates(under: URL(fileURLWithPath: productsDir)))
         }
 
         let bundleCandidates = [
@@ -338,19 +336,52 @@ final class LifecycleUITestSocketClient {
             Bundle(for: Self.self).bundleURL,
         ]
         for bundleURL in bundleCandidates {
-            let cliPath = bundleURL
-                .deletingLastPathComponent()
-                .appendingPathComponent("Resources/bin/cmux")
-                .path
-            candidates.append(cliPath)
+            if let productsDir = productsDirectory(from: bundleURL) {
+                candidates.append(contentsOf: bundledCLICandidates(under: productsDir))
+            }
         }
 
-        for candidate in candidates {
+        for candidate in Array(Set(candidates)) {
             if fileManager.isExecutableFile(atPath: candidate) {
                 return URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
             }
         }
         return nil
+    }
+
+    private func productsDirectory(from bundleURL: URL) -> URL? {
+        var url = bundleURL.resolvingSymlinksInPath()
+        while url.path != "/" {
+            if url.pathExtension == "app" {
+                return url.deletingLastPathComponent()
+            }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    private func bundledCLICandidates(under productsDir: URL) -> [String] {
+        let fileManager = FileManager.default
+        var candidates = [
+            productsDir.appendingPathComponent("cmux DEV.app/Contents/Resources/bin/cmux").path,
+            productsDir.appendingPathComponent("cmux.app/Contents/Resources/bin/cmux").path,
+        ]
+
+        if let children = try? fileManager.contentsOfDirectory(
+            at: productsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for child in children where child.pathExtension == "app" {
+                let name = child.lastPathComponent
+                if name.contains("UITests-Runner") || name.contains("XCTRunner") {
+                    continue
+                }
+                candidates.append(child.appendingPathComponent("Contents/Resources/bin/cmux").path)
+            }
+        }
+
+        return candidates
     }
 
     private func preview(_ data: Data) -> String {
