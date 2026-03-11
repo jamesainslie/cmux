@@ -421,7 +421,7 @@ private final class LegacyWindowWorkspaceEngine: WindowWorkspaceEngine {
     }
 }
 
-private struct WindowGraphState: Equatable {
+struct WindowGraphState: Equatable {
     enum Action {
         case bootstrap(WorkspaceEngineRenderInputs)
         case selectWorkspace(UUID?, WorkspaceEngineRenderInputs)

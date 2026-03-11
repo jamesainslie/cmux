@@ -1,5 +1,6 @@
 import XCTest
 import CoreGraphics
+import Bonsplit
 
 #if canImport(cmux_DEV)
 @testable import cmux_DEV
@@ -256,5 +257,255 @@ final class WorkspaceContentViewVisibilityTests: XCTestCase {
         XCTAssertFalse(reclaimAttempt.accepted)
         XCTAssertTrue(reclaimAttempt.blockedByLock)
         XCTAssertEqual(reclaimAttempt.activeLease?.hostId, ObjectIdentifier(newHost))
+    }
+
+    func testWorkspaceGraphSnapshotMergeRetainsSelectionAndFocusAcrossTransientLiveGap() {
+        let workspaceId = UUID()
+        let paneId = UUID()
+        let primaryPanelId = UUID()
+        let secondaryPanelId = UUID()
+
+        let previous = makeWorkspaceGraphSnapshot(
+            workspaceId: workspaceId,
+            panes: [
+                WorkspacePaneGraphState(
+                    paneId: paneId,
+                    panelIds: [primaryPanelId, secondaryPanelId],
+                    selectedPanelId: secondaryPanelId
+                )
+            ],
+            focusedPaneId: paneId,
+            focusedPanelId: secondaryPanelId
+        )
+
+        let live = makeWorkspaceGraphSnapshot(
+            workspaceId: workspaceId,
+            panes: [
+                WorkspacePaneGraphState(
+                    paneId: paneId,
+                    panelIds: [primaryPanelId, secondaryPanelId],
+                    selectedPanelId: nil
+                )
+            ],
+            focusedPaneId: nil,
+            focusedPanelId: nil
+        )
+
+        let merged = previous.merged(with: live)
+
+        XCTAssertEqual(merged.selectedPanelId(inPane: PaneID(id: paneId)), secondaryPanelId)
+        XCTAssertEqual(merged.focusedPaneId, paneId)
+        XCTAssertEqual(merged.focusedPanelId, secondaryPanelId)
+    }
+
+    func testWindowGraphStateKeepsSelectedAndRetiringWorkspacesMountedDuringHandoff() {
+        let firstWorkspaceId = UUID()
+        let secondWorkspaceId = UUID()
+
+        var graphState = WindowGraphState()
+        _ = graphState.apply(
+            .bootstrap(
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [firstWorkspaceId, secondWorkspaceId],
+                    selectedWorkspaceId: firstWorkspaceId
+                )
+            )
+        )
+
+        let transition = graphState.apply(
+            .selectWorkspace(
+                secondWorkspaceId,
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [firstWorkspaceId, secondWorkspaceId],
+                    selectedWorkspaceId: secondWorkspaceId
+                )
+            )
+        )
+
+        XCTAssertEqual(transition, .handoffStarted)
+        XCTAssertEqual(graphState.selectedWorkspaceId, secondWorkspaceId)
+        XCTAssertEqual(graphState.retiringWorkspaceId, firstWorkspaceId)
+        XCTAssertEqual(graphState.mountedWorkspaceIds, [secondWorkspaceId, firstWorkspaceId])
+
+        _ = graphState.apply(
+            .completeWorkspaceHandoff(
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [firstWorkspaceId, secondWorkspaceId],
+                    selectedWorkspaceId: secondWorkspaceId
+                )
+            )
+        )
+
+        XCTAssertEqual(graphState.retiringWorkspaceId, nil)
+        XCTAssertEqual(graphState.mountedWorkspaceIds, [secondWorkspaceId])
+    }
+
+    func testWindowGraphStateReconcileDropsClosedRetiringWorkspace() {
+        let firstWorkspaceId = UUID()
+        let secondWorkspaceId = UUID()
+
+        var graphState = WindowGraphState()
+        _ = graphState.apply(
+            .bootstrap(
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [firstWorkspaceId, secondWorkspaceId],
+                    selectedWorkspaceId: firstWorkspaceId
+                )
+            )
+        )
+        _ = graphState.apply(
+            .selectWorkspace(
+                secondWorkspaceId,
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [firstWorkspaceId, secondWorkspaceId],
+                    selectedWorkspaceId: secondWorkspaceId
+                )
+            )
+        )
+
+        _ = graphState.apply(
+            .reconcile(
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [secondWorkspaceId],
+                    selectedWorkspaceId: secondWorkspaceId
+                )
+            )
+        )
+
+        XCTAssertEqual(graphState.selectedWorkspaceId, secondWorkspaceId)
+        XCTAssertNil(graphState.retiringWorkspaceId)
+        XCTAssertEqual(graphState.mountedWorkspaceIds, [secondWorkspaceId])
+    }
+
+    func testWindowGraphStateReconcileRetainsMergedWorkspaceSnapshotState() {
+        let workspaceId = UUID()
+        let paneId = UUID()
+        let firstPanelId = UUID()
+        let secondPanelId = UUID()
+        let previousSnapshot = makeWorkspaceGraphSnapshot(
+            workspaceId: workspaceId,
+            panes: [
+                WorkspacePaneGraphState(
+                    paneId: paneId,
+                    panelIds: [firstPanelId, secondPanelId],
+                    selectedPanelId: secondPanelId
+                )
+            ],
+            focusedPaneId: paneId,
+            focusedPanelId: secondPanelId
+        )
+        let transientSnapshot = makeWorkspaceGraphSnapshot(
+            workspaceId: workspaceId,
+            panes: [
+                WorkspacePaneGraphState(
+                    paneId: paneId,
+                    panelIds: [firstPanelId, secondPanelId],
+                    selectedPanelId: nil
+                )
+            ],
+            focusedPaneId: nil,
+            focusedPanelId: nil
+        )
+
+        var graphState = WindowGraphState()
+        _ = graphState.apply(
+            .bootstrap(
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [workspaceId],
+                    selectedWorkspaceId: workspaceId,
+                    workspaceSnapshotsById: [workspaceId: previousSnapshot]
+                )
+            )
+        )
+
+        _ = graphState.apply(
+            .reconcile(
+                makeWorkspaceEngineInputs(
+                    orderedWorkspaceIds: [workspaceId],
+                    selectedWorkspaceId: workspaceId,
+                    workspaceSnapshotsById: [workspaceId: transientSnapshot]
+                )
+            )
+        )
+
+        guard let mergedSnapshot = graphState.workspaceSnapshotsById[workspaceId] else {
+            XCTFail("Expected merged workspace snapshot for \(workspaceId)")
+            return
+        }
+        XCTAssertEqual(mergedSnapshot.selectedPanelId(inPane: PaneID(id: paneId)), secondPanelId)
+        XCTAssertEqual(mergedSnapshot.focusedPaneId, paneId)
+        XCTAssertEqual(mergedSnapshot.focusedPanelId, secondPanelId)
+    }
+
+    private func makeWorkspaceEngineInputs(
+        orderedWorkspaceIds: [UUID],
+        selectedWorkspaceId: UUID?,
+        retainedWorkspaceIds: Set<UUID> = [],
+        isWorkspaceCycleHot: Bool = false,
+        workspaceSnapshotsById: [UUID: WorkspaceGraphSnapshot] = [:]
+    ) -> WorkspaceEngineRenderInputs {
+        let resolvedSnapshotsById = workspaceSnapshotsById.isEmpty
+            ? Dictionary(uniqueKeysWithValues: orderedWorkspaceIds.map { workspaceId in
+                (workspaceId, makeWorkspaceGraphSnapshot(workspaceId: workspaceId))
+            })
+            : workspaceSnapshotsById
+
+        return WorkspaceEngineRenderInputs(
+            orderedWorkspaceIds: orderedWorkspaceIds,
+            selectedWorkspaceId: selectedWorkspaceId,
+            retainedWorkspaceIds: retainedWorkspaceIds,
+            isWorkspaceCycleHot: isWorkspaceCycleHot,
+            workspaceSnapshotsById: resolvedSnapshotsById
+        )
+    }
+
+    private func makeWorkspaceGraphSnapshot(
+        workspaceId: UUID,
+        panes: [WorkspacePaneGraphState] = [],
+        focusedPaneId: UUID? = nil,
+        focusedPanelId: UUID? = nil,
+        zoomedPaneId: UUID? = nil
+    ) -> WorkspaceGraphSnapshot {
+        let paneNodes = panes.map { pane in
+            ExternalTreeNode.pane(
+                ExternalPaneNode(
+                    id: pane.paneId.uuidString,
+                    frame: PixelRect(x: 0, y: 0, width: 200, height: 120),
+                    tabs: pane.panelIds.map { ExternalTab(id: $0.uuidString, title: "Panel") },
+                    selectedTabId: pane.selectedPanelId?.uuidString
+                )
+            )
+        }
+        let paneTree: ExternalTreeNode = paneNodes.first ?? .pane(
+            ExternalPaneNode(
+                id: UUID().uuidString,
+                frame: PixelRect(x: 0, y: 0, width: 200, height: 120),
+                tabs: [],
+                selectedTabId: nil
+            )
+        )
+        let layoutSnapshot = LayoutSnapshot(
+            containerFrame: PixelRect(x: 0, y: 0, width: 200, height: 120),
+            panes: panes.map { pane in
+                PaneGeometry(
+                    paneId: pane.paneId.uuidString,
+                    frame: PixelRect(x: 0, y: 0, width: 200, height: 120),
+                    selectedTabId: pane.selectedPanelId?.uuidString,
+                    tabIds: pane.panelIds.map(\.uuidString)
+                )
+            },
+            focusedPaneId: focusedPaneId?.uuidString,
+            timestamp: 0
+        )
+
+        return WorkspaceGraphSnapshot(
+            workspaceId: workspaceId,
+            paneTree: paneTree,
+            layoutSnapshot: layoutSnapshot,
+            panes: panes,
+            focusedPaneId: focusedPaneId,
+            focusedPanelId: focusedPanelId,
+            zoomedPaneId: zoomedPaneId
+        )
     }
 }
