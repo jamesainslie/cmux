@@ -5818,7 +5818,9 @@ final class GhosttySurfaceScrollView: NSView {
         addSubview(inactiveOverlayView)
         framePreservationOverlayView.wantsLayer = true
         framePreservationOverlayView.layer?.backgroundColor = NSColor.clear.cgColor
-        framePreservationOverlayView.layer?.contentsGravity = .resize
+        // Preserve the old frame without scaling it to the new pane bounds.
+        // Cropping a stale snapshot is less jarring than stretching text during split churn.
+        framePreservationOverlayView.layer?.contentsGravity = .topLeft
         framePreservationOverlayView.layer?.masksToBounds = true
         framePreservationOverlayView.isHidden = true
         addSubview(framePreservationOverlayView)

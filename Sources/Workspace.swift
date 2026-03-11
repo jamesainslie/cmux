@@ -2079,6 +2079,7 @@ final class Workspace: Identifiable, ObservableObject {
         // Capture the source terminal's hosted view before bonsplit mutates focusedPaneId,
         // so we can hand it to focusPanel as the "move focus FROM" view.
         let previousHostedView = focusedTerminalPanel?.hostedView
+        preserveVisibleTerminalFramesDuringSplitMutation(reason: "workspace.newTerminalSplit")
 
         // Create the split with the new tab already present in the new pane.
         isProgrammaticSplit = true
@@ -2112,6 +2113,7 @@ final class Workspace: Identifiable, ObservableObject {
             )
         }
 
+        refreshSurvivingTerminalSurfacesAfterSplitMutation(reason: "workspace.newTerminalSplit")
         markGraphStateChanged(reason: "newTerminalSplit")
 
         return newPanel
@@ -2213,6 +2215,7 @@ final class Workspace: Identifiable, ObservableObject {
         )
         surfaceIdToPanelId[newTab.id] = browserPanel.id
         let previousFocusedPanelId = focusedPanelId
+        preserveVisibleTerminalFramesDuringSplitMutation(reason: "workspace.newBrowserSplit")
 
         // Create the split with the browser tab already present.
         // Mark this split as programmatic so didSplitPane doesn't auto-create a terminal.
@@ -2242,6 +2245,7 @@ final class Workspace: Identifiable, ObservableObject {
         }
 
         installBrowserPanelSubscription(browserPanel)
+        refreshSurvivingTerminalSurfacesAfterSplitMutation(reason: "workspace.newBrowserSplit")
         markGraphStateChanged(reason: "newBrowserSplit")
 
         return browserPanel
@@ -2344,6 +2348,7 @@ final class Workspace: Identifiable, ObservableObject {
         )
         surfaceIdToPanelId[newTab.id] = markdownPanel.id
         let previousFocusedPanelId = focusedPanelId
+        preserveVisibleTerminalFramesDuringSplitMutation(reason: "workspace.newMarkdownSplit")
 
         // Create the split with the markdown tab already present in the new pane.
         // Mark this split as programmatic so didSplitPane doesn't auto-create a terminal.
@@ -2373,6 +2378,7 @@ final class Workspace: Identifiable, ObservableObject {
         }
 
         installMarkdownPanelSubscription(markdownPanel)
+        refreshSurvivingTerminalSurfacesAfterSplitMutation(reason: "workspace.newMarkdownSplit")
         markGraphStateChanged(reason: "newMarkdownSplit")
 
         return markdownPanel
@@ -3935,6 +3941,21 @@ final class Workspace: Identifiable, ObservableObject {
                     }
                 }
             }
+        }
+    }
+
+    private func preserveVisibleTerminalFramesDuringSplitMutation(reason: String) {
+        let visiblePanelIds = renderedVisiblePanelIdsForCurrentLayout()
+        guard !visiblePanelIds.isEmpty else { return }
+
+        for panelId in visiblePanelIds {
+            guard let terminalPanel = terminalPanel(for: panelId) else { continue }
+            let hostedView = terminalPanel.hostedView
+            guard hostedView.window != nil,
+                  hostedView.superview != nil,
+                  hostedView.bounds.width > 2,
+                  hostedView.bounds.height > 2 else { continue }
+            hostedView.preserveCurrentFrameDuringTransition(reason: "\(reason).prepare")
         }
     }
 
