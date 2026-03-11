@@ -861,7 +861,27 @@ class TabManager: ObservableObject {
             "selectedTabId": select ? newWorkspace.id.uuidString : (selectedTabId?.uuidString ?? "")
         ])
 #endif
+        if select && !UserDefaults.standard.bool(forKey: WelcomeSettings.shownKey) {
+            UserDefaults.standard.set(true, forKey: WelcomeSettings.shownKey)
+            sendWelcomeWhenReady(to: newWorkspace)
+        }
         return newWorkspace
+    }
+
+    private func sendWelcomeWhenReady(to workspace: Workspace, attempt: Int = 0) {
+        let maxAttempts = 60
+        if let terminalPanel = workspace.focusedTerminalPanel,
+           terminalPanel.surface.surface != nil {
+            // Wait a bit more for the shell prompt to be ready
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                terminalPanel.sendText("cmux welcome\n")
+            }
+            return
+        }
+        guard attempt < maxAttempts else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.sendWelcomeWhenReady(to: workspace, attempt: attempt + 1)
+        }
     }
 
     private func scheduleInitialWorkspaceGitMetadataRefresh(

@@ -4897,6 +4897,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updateController.checkForUpdates()
     }
 
+    func openWelcomeWorkspace() {
+        guard let context = preferredMainWindowContextForWorkspaceCreation(event: nil, debugSource: "welcome") else {
+            return
+        }
+        if let window = context.window ?? windowForMainWindowId(context.windowId) {
+            setActiveMainWindow(window)
+            bringToFront(window)
+        }
+        let workspace = context.tabManager.addWorkspace(select: true)
+        sendWelcomeCommandWhenReady(to: workspace)
+    }
+
+    private func sendWelcomeCommandWhenReady(to workspace: Workspace, attempt: Int = 0) {
+        let maxAttempts = 60
+        if let terminalPanel = workspace.focusedTerminalPanel,
+           terminalPanel.surface.surface != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                terminalPanel.sendText("cmux welcome\n")
+            }
+            return
+        }
+        guard attempt < maxAttempts else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.sendWelcomeCommandWhenReady(to: workspace, attempt: attempt + 1)
+        }
+    }
+
     @objc func applyUpdateIfAvailable(_ sender: Any?) {
         updateViewModel.overrideState = nil
         updateController.installUpdate()

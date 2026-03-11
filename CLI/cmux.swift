@@ -886,6 +886,11 @@ struct CMUXCLI {
             return
         }
 
+        if command == "welcome" {
+            printWelcome()
+            return
+        }
+
         // If the argument looks like a path (not a known command), open a workspace there.
         if looksLikePath(command) {
             try openPath(command, socketPath: resolvedSocketPath)
@@ -4056,6 +4061,13 @@ struct CMUXCLI {
 
             Show top-level CLI usage and command list.
             """
+        case "welcome":
+            return """
+            Usage: cmux welcome
+
+            Show a welcome screen with the cmux logo and useful shortcuts.
+            Auto-runs once on first launch.
+            """
         case "identify":
             return """
             Usage: cmux identify [--workspace <id|ref|index>] [--surface <id|ref|index>] [--no-caller]
@@ -6652,6 +6664,61 @@ struct CMUXCLI {
         return "\(baseSummary) [\(commit)]"
     }
 
+    private func printWelcome() {
+        let version = versionSummary()
+        let reset = "\u{001B}[0m"
+        let bold = "\u{001B}[1m"
+        let dim = "\u{001B}[2m"
+
+        // 256-color codes for blue-to-purple gradient (top to bottom)
+        func fg(_ code: Int) -> String { "\u{001B}[38;5;\(code)m" }
+        let c1 = fg(39)   // bright blue
+        let c2 = fg(38)   // blue
+        let c3 = fg(33)   // medium blue
+        let c4 = fg(63)   // blue-purple
+        let c5 = fg(62)   // purple-blue
+        let c6 = fg(98)   // purple
+        let c7 = fg(97)   // deep purple
+        let c8 = fg(133)  // magenta-purple
+
+        // Chevron arrow (the cmux logo) with blue-to-purple gradient
+        let logo = """
+        \(c1)        ╱╲\(reset)
+        \(c2)       ╱╱ ╲╲\(reset)
+        \(c3)      ╱╱   ╲╲\(reset)
+        \(c4)     ╱╱     ╲╲\(reset)
+        \(c5)    ╱╱       ╲╲\(reset)
+        \(c6)    ╲╲       ╱╱\(reset)
+        \(c7)     ╲╲     ╱╱\(reset)
+        \(c8)      ╲╲   ╱╱\(reset)
+        \(c8)       ╲╲ ╱╱\(reset)
+        \(c8)        ╲╱\(reset)
+        """
+
+        let shortcuts = """
+        \(bold)Shortcuts\(reset)
+
+          \(bold)\u{2318}N\(reset)\(dim)             New workspace\(reset)
+          \(bold)\u{2318}D\(reset)\(dim)             Split right\(reset)
+          \(bold)\u{2318}\u{21E7}D\(reset)\(dim)            Split down\(reset)
+          \(bold)\u{2318}\u{21E7}P\(reset)\(dim)            Command palette\(reset)
+          \(bold)\u{2318}\u{21E7}L\(reset)\(dim)            New browser\(reset)
+          \(bold)\u{2318}\u{21E7}U\(reset)\(dim)            Jump to latest unread\(reset)
+        """
+
+        print()
+        print(logo)
+        print()
+        print("  \(dim)\(version)\(reset)")
+        print()
+        print(shortcuts)
+        print("  \(dim)Run \(reset)\(bold)cmux --help\(reset)\(dim) to see all CLI commands.\(reset)")
+        print()
+
+        // Mark welcome as shown
+        UserDefaults.standard.set(true, forKey: "cmuxWelcomeShown")
+    }
+
     private func resolvedVersionInfo() -> [String: String] {
         var info: [String: String] = [:]
         if let main = versionInfo(from: Bundle.main.infoDictionary) {
@@ -6933,6 +7000,7 @@ struct CMUXCLI {
 
         Commands:
           version
+          welcome
           ping
           capabilities
           identify [--workspace <id|ref|index>] [--surface <id|ref|index>] [--no-caller]

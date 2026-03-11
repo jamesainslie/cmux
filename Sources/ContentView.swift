@@ -8079,6 +8079,7 @@ private enum SidebarHelpMenuAction {
     case githubIssues
     case checkForUpdates
     case sendFeedback
+    case welcome
 }
 
 private struct SidebarFeedbackComposerSheet: View {
@@ -8504,6 +8505,12 @@ private struct SidebarHelpMenuButton: View {
     private var helpPopover: some View {
         VStack(alignment: .leading, spacing: 2) {
             helpOptionButton(
+                title: String(localized: "sidebar.help.welcome", defaultValue: "Welcome"),
+                action: .welcome,
+                accessibilityIdentifier: "SidebarHelpMenuOptionWelcome",
+                isExternalLink: false
+            )
+            helpOptionButton(
                 title: String(localized: "sidebar.help.sendFeedback", defaultValue: "Send Feedback"),
                 action: .sendFeedback,
                 accessibilityIdentifier: "SidebarHelpMenuOptionSendFeedback",
@@ -8643,6 +8650,12 @@ private struct SidebarHelpMenuButton: View {
         case .sendFeedback:
             isPopoverPresented = false
             onSendFeedback()
+        case .welcome:
+            Task { @MainActor in
+                if let appDelegate = AppDelegate.shared {
+                    appDelegate.openWelcomeWorkspace()
+                }
+            }
         }
     }
 
