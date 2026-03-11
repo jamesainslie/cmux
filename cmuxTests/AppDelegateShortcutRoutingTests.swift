@@ -10,6 +10,8 @@ import XCTest
 final class AppDelegateShortcutRoutingTests: XCTestCase {
     private var savedShortcutsByAction: [KeyboardShortcutSettings.Action: StoredShortcut] = [:]
     private var actionsWithPersistedShortcut: Set<KeyboardShortcutSettings.Action> = []
+    private var savedWorkspaceEngineDefaultRaw: String?
+    private var hadPersistedWorkspaceEngineDefault = false
 
     override func setUp() {
         super.setUp()
@@ -24,6 +26,12 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             }
         )
         KeyboardShortcutSettings.resetAll()
+        hadPersistedWorkspaceEngineDefault =
+            UserDefaults.standard.object(forKey: WorkspaceEngineSettings.defaultEngineKindKey) != nil
+        savedWorkspaceEngineDefaultRaw = UserDefaults.standard.string(
+            forKey: WorkspaceEngineSettings.defaultEngineKindKey
+        )
+        UserDefaults.standard.removeObject(forKey: WorkspaceEngineSettings.defaultEngineKindKey)
     }
 
     override func tearDown() {
@@ -38,7 +46,115 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
                 KeyboardShortcutSettings.resetShortcut(for: action)
             }
         }
+        if hadPersistedWorkspaceEngineDefault,
+           let savedWorkspaceEngineDefaultRaw {
+            UserDefaults.standard.set(
+                savedWorkspaceEngineDefaultRaw,
+                forKey: WorkspaceEngineSettings.defaultEngineKindKey
+            )
+        } else {
+            UserDefaults.standard.removeObject(forKey: WorkspaceEngineSettings.defaultEngineKindKey)
+        }
         super.tearDown()
+    }
+
+    func testCreateMainWindowUsesPersistedWorkspaceEngineDefault() {
+        guard let appDelegate = AppDelegate.shared else {
+            XCTFail("Expected AppDelegate.shared")
+            return
+        }
+
+        UserDefaults.standard.set(
+            WorkspaceEngineKind.graphV1.rawValue,
+            forKey: WorkspaceEngineSettings.defaultEngineKindKey
+        )
+
+        let windowId = appDelegate.createMainWindow()
+        defer { closeWindow(withId: windowId) }
+
+        guard let manager = appDelegate.tabManagerFor(windowId: windowId) else {
+            XCTFail("Expected tab manager for created window")
+            return
+        }
+
+        XCTAssertEqual(manager.workspaceEngineKind, .graphV1)
+    }
+
+    func testCreateMainWindowRestoresWorkspaceEngineKindFromSessionSnapshot() {
+        guard let appDelegate = AppDelegate.shared else {
+            XCTFail("Expected AppDelegate.shared")
+            return
+        }
+
+        UserDefaults.standard.set(
+            WorkspaceEngineKind.legacy.rawValue,
+            forKey: WorkspaceEngineSettings.defaultEngineKindKey
+        )
+
+        let windowId = appDelegate.createMainWindow(
+            sessionWindowSnapshot: makeSessionWindowSnapshot(workspaceEngineKind: .graphV1)
+        )
+        defer { closeWindow(withId: windowId) }
+
+        guard let manager = appDelegate.tabManagerFor(windowId: windowId) else {
+            XCTFail("Expected tab manager for restored window")
+            return
+        }
+
+        XCTAssertEqual(manager.workspaceEngineKind, .graphV1)
+    }
+
+    func testExplicitWorkspaceEngineKindOverridesSessionSnapshot() {
+        guard let appDelegate = AppDelegate.shared else {
+            XCTFail("Expected AppDelegate.shared")
+            return
+        }
+
+        let windowId = appDelegate.createMainWindow(
+            sessionWindowSnapshot: makeSessionWindowSnapshot(workspaceEngineKind: .legacy),
+            workspaceEngineKind: .graphV1
+        )
+        defer { closeWindow(withId: windowId) }
+
+        guard let manager = appDelegate.tabManagerFor(windowId: windowId) else {
+            XCTFail("Expected tab manager for overridden window")
+            return
+        }
+
+        XCTAssertEqual(manager.workspaceEngineKind, .graphV1)
+    }
+
+    func testMoveWorkspaceToNewWindowPreservesWorkspaceEngineKind() {
+        guard let appDelegate = AppDelegate.shared else {
+            XCTFail("Expected AppDelegate.shared")
+            return
+        }
+
+        let sourceWindowId = appDelegate.createMainWindow(workspaceEngineKind: .graphV1)
+        var destinationWindowId: UUID?
+        defer {
+            closeWindow(withId: sourceWindowId)
+            if let destinationWindowId {
+                closeWindow(withId: destinationWindowId)
+            }
+        }
+
+        guard let sourceManager = appDelegate.tabManagerFor(windowId: sourceWindowId),
+              let sourceWorkspaceId = sourceManager.selectedTabId else {
+            XCTFail("Expected graph-v1 source window context")
+            return
+        }
+
+        destinationWindowId = appDelegate.moveWorkspaceToNewWindow(workspaceId: sourceWorkspaceId)
+
+        guard let destinationWindowId,
+              let destinationManager = appDelegate.tabManagerFor(windowId: destinationWindowId) else {
+            XCTFail("Expected destination window after moving workspace")
+            return
+        }
+
+        XCTAssertEqual(destinationManager.workspaceEngineKind, .graphV1)
+        XCTAssertTrue(destinationManager.tabs.contains(where: { $0.id == sourceWorkspaceId }))
     }
 
     func testCmdNUsesEventWindowContextWhenActiveManagerIsStale() {
@@ -2262,6 +2378,34 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         guard let window = window(withId: windowId) else { return }
         window.performClose(nil)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+    }
+
+    private func makeSessionWindowSnapshot(workspaceEngineKind: WorkspaceEngineKind?) -> SessionWindowSnapshot {
+        let workspace = SessionWorkspaceSnapshot(
+            processTitle: "Terminal",
+            customTitle: "Restored",
+            customColor: nil,
+            isPinned: false,
+            currentDirectory: "/tmp",
+            focusedPanelId: nil,
+            layout: .pane(SessionPaneLayoutSnapshot(panelIds: [], selectedPanelId: nil)),
+            panels: [],
+            statusEntries: [],
+            logEntries: [],
+            progress: nil,
+            gitBranch: nil
+        )
+
+        return SessionWindowSnapshot(
+            frame: nil,
+            display: nil,
+            workspaceEngineKind: workspaceEngineKind,
+            tabManager: SessionTabManagerSnapshot(
+                selectedWorkspaceIndex: 0,
+                workspaces: [workspace]
+            ),
+            sidebar: SessionSidebarSnapshot(isVisible: true, selection: .tabs, width: 240)
+        )
     }
 }
 
