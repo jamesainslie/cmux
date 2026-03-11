@@ -426,7 +426,7 @@ struct BrowserPanelView: View {
             }
             panel.refreshAppearanceDrivenColors()
             panel.setBrowserThemeMode(browserThemeMode)
-            applyPendingAddressBarFocusRequestIfNeeded()
+            schedulePendingAddressBarFocusRequestApply()
             syncURLFromPanel()
             // If the browser surface is focused but has no URL loaded yet, auto-focus the omnibar.
             autoFocusOmnibarIfBlank()
@@ -462,7 +462,7 @@ struct BrowserPanelView: View {
             panel.refreshAppearanceDrivenColors()
         }
         .onChange(of: panel.pendingAddressBarFocusRequestId) { _ in
-            applyPendingAddressBarFocusRequestIfNeeded()
+            schedulePendingAddressBarFocusRequestApply()
         }
         .onChange(of: isFocused) { focused in
 #if DEBUG
@@ -473,7 +473,7 @@ struct BrowserPanelView: View {
 #endif
             // Ensure this view doesn't retain focus while hidden (bonsplit keepAllAlive).
             if focused {
-                applyPendingAddressBarFocusRequestIfNeeded()
+                schedulePendingAddressBarFocusRequestApply()
                 autoFocusOmnibarIfBlank()
             } else {
                 panel.invalidateAddressBarPageFocusRestoreAttempts()
@@ -561,6 +561,7 @@ struct BrowserPanelView: View {
             addressBarButtonBar
 
             omnibarField
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("BrowserOmnibarPill")
                 .accessibilityLabel("Browser omnibar")
 
@@ -1042,6 +1043,12 @@ struct BrowserPanelView: View {
     private func clearPendingAddressBarFocusRetry() {
         pendingAddressBarFocusRetryRequestId = nil
         pendingAddressBarFocusRetryGeneration &+= 1
+    }
+
+    private func schedulePendingAddressBarFocusRequestApply() {
+        DispatchQueue.main.async {
+            applyPendingAddressBarFocusRequestIfNeeded()
+        }
     }
 
     private func schedulePendingAddressBarFocusRetryIfNeeded(requestId: UUID) {

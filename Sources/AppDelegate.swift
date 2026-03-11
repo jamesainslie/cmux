@@ -6295,6 +6295,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return object
     }
 
+    private func normalizeGotoSplitUITestWindow(
+        _ window: NSWindow,
+        context: MainWindowContext
+    ) {
+        context.sidebarSelectionState.selection = .tabs
+        context.sidebarState.isVisible = false
+        context.sidebarState.persistedWidth = CGFloat(SessionPersistencePolicy.defaultSidebarWidth)
+
+        let targetFrame = resolvedGotoSplitUITestWindowFrame(for: window)
+        let currentFrame = window.frame
+        let needsResize =
+            abs(currentFrame.origin.x - targetFrame.origin.x) > 0.5 ||
+            abs(currentFrame.origin.y - targetFrame.origin.y) > 0.5 ||
+            abs(currentFrame.size.width - targetFrame.size.width) > 0.5 ||
+            abs(currentFrame.size.height - targetFrame.size.height) > 0.5
+        if needsResize {
+            window.setFrame(targetFrame, display: true)
+        }
+
+        writeGotoSplitTestData([
+            "windowFrameBeforeGotoSplitSetup": String(
+                format: "%.1f,%.1f %.1fx%.1f",
+                targetFrame.origin.x,
+                targetFrame.origin.y,
+                targetFrame.size.width,
+                targetFrame.size.height
+            ),
+            "sidebarVisibleBeforeGotoSplitSetup": context.sidebarState.isVisible ? "true" : "false",
+            "sidebarWidthBeforeGotoSplitSetup": String(format: "%.1f", context.sidebarState.persistedWidth)
+        ])
+    }
+
+    private func resolvedGotoSplitUITestWindowFrame(for window: NSWindow) -> NSRect {
+        let visibleFrame = window.screen?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 820)
+        let insetVisibleFrame = visibleFrame.insetBy(dx: 40, dy: 40)
+        let targetWidth = min(insetVisibleFrame.width, 1000)
+        let targetHeight = min(insetVisibleFrame.height, 760)
+        let x = max(
+            insetVisibleFrame.minX,
+            min(insetVisibleFrame.midX - (targetWidth / 2), insetVisibleFrame.maxX - targetWidth)
+        )
+        let y = max(
+            insetVisibleFrame.minY,
+            min(insetVisibleFrame.midY - (targetHeight / 2), insetVisibleFrame.maxY - targetHeight)
+        )
+        return NSRect(x: x, y: y, width: targetWidth, height: targetHeight)
+    }
+
     private func setupGotoSplitUITestIfNeeded() {
         guard !didSetupGotoSplitUITest else { return }
         didSetupGotoSplitUITest = true
@@ -6365,39 +6415,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 return
             }
             self.setActiveMainWindow(targetWindow)
-            let resolvedTabManager =
-                self.contextForMainTerminalWindow(targetWindow, reindex: false)?.tabManager
-                ?? self.synchronizeActiveMainWindowContext(preferredWindow: targetWindow)
-                ?? self.tabManager
-            guard let tabManager = resolvedTabManager else {
-                self.writeGotoSplitTestData(["setupError": "Missing active tab manager"])
+            _ = self.synchronizeActiveMainWindowContext(preferredWindow: targetWindow)
+            guard let context = self.contextForMainTerminalWindow(targetWindow, reindex: false) else {
+                self.writeGotoSplitTestData(["setupError": "Missing main window context"])
                 return
             }
-
-            let tab = tabManager.addTab()
-            guard let initialPanelId = tab.focusedPanelId else {
-                self.writeGotoSplitTestData(["setupError": "Missing initial panel id"])
-                return
+            self.normalizeGotoSplitUITestWindow(targetWindow, context: context)
+            let tabManager = context.tabManager
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.finishGotoSplitUITestSetup(tabManager: tabManager)
             }
-
-            let url = URL(string: "https://example.com")
-            guard let browserPanelId = tabManager.newBrowserSplit(
-                tabId: tab.id,
-                fromPanelId: initialPanelId,
-                orientation: .horizontal,
-                url: url
-            ) else {
-                self.writeGotoSplitTestData(["setupError": "Failed to create browser split"])
-                return
-            }
-
-            self.focusWebViewForGotoSplitUITest(tab: tab, browserPanelId: browserPanelId)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard self != nil else { return }
             runSetupWhenWindowReady()
         }
+    }
+
+    private func finishGotoSplitUITestSetup(tabManager: TabManager) {
+        let tab = tabManager.addTab()
+        guard let initialPanelId = tab.focusedPanelId else {
+            writeGotoSplitTestData(["setupError": "Missing initial panel id"])
+            return
+        }
+
+        let url = URL(string: "https://example.com")
+        guard let browserPanelId = tabManager.newBrowserSplit(
+            tabId: tab.id,
+            fromPanelId: initialPanelId,
+            orientation: .horizontal,
+            url: url
+        ) else {
+            writeGotoSplitTestData(["setupError": "Failed to create browser split"])
+            return
+        }
+
+        focusWebViewForGotoSplitUITest(tab: tab, browserPanelId: browserPanelId)
     }
 
     private func isGotoSplitUITestRecordingEnabled() -> Bool {
@@ -6452,6 +6506,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updates["browserFindNeedle"] = browserWithFind?.searchState?.needle ?? ""
 
         return updates
+    }
+
+    func recordGotoSplitFocusSnapshotIfNeeded(for workspace: Workspace) {
+        guard isGotoSplitUITestRecordingEnabled() else { return }
+        writeGotoSplitTestData(gotoSplitFindStateSnapshot(for: workspace))
     }
 
     private func focusWebViewForGotoSplitUITest(tab: Workspace, browserPanelId: UUID, attempt: Int = 0) {

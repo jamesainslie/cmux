@@ -378,8 +378,20 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
         )
 
         let omnibar = app.textFields["BrowserOmnibarTextField"].firstMatch
+        let pill = app.descendants(matching: .any).matching(identifier: "BrowserOmnibarPill").firstMatch
         XCTAssertTrue(omnibar.waitForExistence(timeout: 6.0), "Expected browser omnibar text field")
-        omnibar.click()
+        XCTAssertTrue(pill.waitForExistence(timeout: 6.0), "Expected browser omnibar pill")
+        XCTAssertTrue(
+            focusBrowserOmnibar(omnibar: omnibar, pill: pill, timeout: 6.0),
+            "Expected browser omnibar surface to accept click focus. pill=\(pill.frame) omnibar=\(omnibar.frame)"
+        )
+        XCTAssertTrue(
+            waitForDataMatch(timeout: 5.0) { data in
+                data["focusedPanelId"] == expectedBrowserPanelId &&
+                    data["focusedPanelKind"] == "browser"
+            },
+            "Expected omnibar click to focus the browser pane before Cmd+L. data=\(loadData() ?? [:])"
+        )
 
         // Cmd+L behavior is context-aware:
         // - If terminal is focused: opens a new browser and focuses that new omnibar.
@@ -618,7 +630,7 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
         app.typeKey("a", modifierFlags: [.command])
         app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
         if useAutofocusRacePage {
-            app.typeText(autofocusRacePageURL)
+            app.typeText(makeAutofocusRacePageURL())
         } else {
             app.typeText("example.com")
         }
@@ -626,8 +638,8 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
 
         if useAutofocusRacePage {
             XCTAssertTrue(
-                waitForOmnibarToContain(omnibar, value: "data:text/html", timeout: 8.0),
-                "Expected browser navigation to data URL before running find flow. value=\(String(describing: omnibar.value))"
+                waitForOmnibarToContain(omnibar, value: "cmux-ui-test-autofocus-race-", timeout: 8.0),
+                "Expected browser navigation to autofocus race fixture before running find flow. value=\(String(describing: omnibar.value))"
             )
         } else {
             XCTAssertTrue(
@@ -758,12 +770,90 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
         return element.exists && element.isHittable
     }
 
-    private var autofocusRacePageURL: String {
-        "data:text/html,%3Cinput%20id%3D%22q%22%3E%3Cscript%3EsetTimeout%28function%28%29%7Bdocument.getElementById%28%22q%22%29.focus%28%29%3Blocation.hash%3D%22focused%22%3B%7D%2C700%29%3B%3C%2Fscript%3E"
+    private func focusBrowserOmnibar(
+        omnibar: XCUIElement,
+        pill: XCUIElement,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if pill.exists && pill.frame.width > 1 && pill.frame.height > 1 {
+                pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+                return true
+            }
+            if omnibar.exists && omnibar.frame.width > 1 && omnibar.frame.height > 1 {
+                omnibar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+
+        if pill.exists && pill.frame.width > 1 && pill.frame.height > 1 {
+            pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            return true
+        }
+        if omnibar.exists && omnibar.frame.width > 1 && omnibar.frame.height > 1 {
+            omnibar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            return true
+        }
+
+        return false
     }
 
-    private var zoomRoundTripPageURL: String {
-        "data:text/html,%3Ctitle%3EIssue%201144%3C/title%3E%3Cbody%20style%3D%22margin:0;background:%231d1f24;color:white;font-family:system-ui;height:2200px%22%3E%3Cmain%20style%3D%22padding:32px%22%3E%3Ch1%3EIssue%201144%20Regression%20Page%3C/h1%3E%3Cp%3EZoom%20should%20not%20leave%20stale%20split%20chrome%20above%20the%20browser%20omnibar.%3C/p%3E%3C/main%3E%3C/body%3E"
+    private func makeAutofocusRacePageURL() -> String {
+        writeTemporaryHTMLFixture(
+            prefix: "autofocus-race",
+            html: """
+            <!doctype html>
+            <html>
+            <body>
+            <input id="q">
+            <script>
+            setTimeout(function () {
+              document.getElementById("q").focus();
+              location.hash = "focused";
+            }, 700);
+            </script>
+            </body>
+            </html>
+            """
+        )
+    }
+
+    private func makeZoomRoundTripPageURL() -> String {
+        writeTemporaryHTMLFixture(
+            prefix: "zoom-round-trip",
+            html: """
+            <!doctype html>
+            <html>
+            <head>
+            <title>Issue 1144</title>
+            </head>
+            <body style="margin:0;background:#1d1f24;color:white;font-family:system-ui;height:2200px">
+            <main style="padding:32px">
+            <h1>Issue 1144 Regression Page</h1>
+            <p>Zoom should not leave stale split chrome above the browser omnibar.</p>
+            </main>
+            </body>
+            </html>
+            """
+        )
+    }
+
+    private func writeTemporaryHTMLFixture(prefix: String, html: String) -> String {
+        let directoryURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let fileURL = directoryURL.appendingPathComponent("cmux-ui-test-\(prefix)-\(UUID().uuidString).html")
+        do {
+            try html.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            XCTFail("Failed to write temporary HTML fixture: \(error)")
+            return "about:blank"
+        }
+
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        return fileURL.absoluteString
     }
 
     private func configuredApp(useGraphV1: Bool) -> XCUIApplication {
@@ -905,15 +995,20 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
         XCTAssertTrue(pill.waitForExistence(timeout: 6.0), "Expected browser omnibar pill before zoom")
 
         app.typeKey("l", modifierFlags: [.command])
-        XCTAssertTrue(waitForElementToBecomeHittable(pill, timeout: 6.0), "Expected browser omnibar pill before navigation")
-        pill.click()
+        XCTAssertTrue(
+            waitForDataMatch(timeout: 5.0) { data in
+                data["webViewFocusedAfterAddressBarFocus"] == "false" &&
+                    data["webViewFocusedAfterAddressBarFocusPanelId"] == browserPanelId
+            },
+            "Expected Cmd+L to focus the browser omnibar before navigation. data=\(loadData() ?? [:])"
+        )
         app.typeKey("a", modifierFlags: [.command])
         app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
-        app.typeText(zoomRoundTripPageURL)
+        app.typeText(makeZoomRoundTripPageURL())
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
 
         XCTAssertTrue(
-            waitForOmnibarToContain(omnibar, value: "data:text/html", timeout: 8.0),
+            waitForOmnibarToContain(omnibar, value: "cmux-ui-test-zoom-round-trip-", timeout: 8.0),
             "Expected browser to finish navigating to the regression page before zoom. value=\(String(describing: omnibar.value))"
         )
 
@@ -945,10 +1040,6 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
 
         XCTAssertTrue(omnibar.waitForExistence(timeout: 6.0), "Expected browser omnibar text field after Cmd+Shift+Enter zoom round-trip")
         XCTAssertTrue(pill.waitForExistence(timeout: 6.0), "Expected browser omnibar pill after Cmd+Shift+Enter zoom round-trip")
-        XCTAssertTrue(
-            waitForElementToBecomeHittable(pill, timeout: 6.0),
-            "Expected browser omnibar to stay hittable after Cmd+Shift+Enter zoom round-trip"
-        )
         let page = app.webViews.firstMatch
         XCTAssertTrue(page.waitForExistence(timeout: 6.0), "Expected browser web area after Cmd+Shift+Enter")
         XCTAssertLessThanOrEqual(
@@ -957,7 +1048,10 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
             "Expected browser omnibar to remain above the web content after Cmd+Shift+Enter. pill=\(pill.frame) page=\(page.frame)"
         )
 
-        pill.click()
+        XCTAssertTrue(
+            focusBrowserOmnibar(omnibar: omnibar, pill: pill, timeout: 6.0),
+            "Expected browser omnibar to stay focusable after Cmd+Shift+Enter. data=\(loadData() ?? [:]) pill=\(pill.frame) omnibar=\(omnibar.frame)"
+        )
         app.typeKey("a", modifierFlags: [.command])
         app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
         app.typeText("issue1144")

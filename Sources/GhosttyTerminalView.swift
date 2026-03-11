@@ -6098,6 +6098,99 @@ final class GhosttySurfaceScrollView: NSView {
         abs(lhs.x - rhs.x) <= epsilon && abs(lhs.y - rhs.y) <= epsilon
     }
 
+    private struct IOSurfaceBlankMetrics {
+        let uniqueQuantized: Int
+        let lumaStdDev: Double
+        let modeFraction: Double
+
+        var isProbablyBlank: Bool {
+            (lumaStdDev < 3.5 && modeFraction > 0.985) ||
+            (uniqueQuantized <= 6 && modeFraction > 0.95)
+        }
+    }
+
+    private func sampleCurrentIOSurfaceBlankMetrics(normalizedCrop: CGRect) -> IOSurfaceBlankMetrics? {
+        guard let modelLayer = surfaceView.layer else { return nil }
+        let layer = modelLayer.presentation() ?? modelLayer
+        guard let contents = layer.contents else { return nil }
+
+        let cf = contents as CFTypeRef
+        guard CFGetTypeID(cf) == IOSurfaceGetTypeID() else {
+            return IOSurfaceBlankMetrics(uniqueQuantized: 1, lumaStdDev: 999, modeFraction: 0)
+        }
+
+        let surfaceRef = (contents as! IOSurfaceRef)
+        let width = Int(IOSurfaceGetWidth(surfaceRef))
+        let height = Int(IOSurfaceGetHeight(surfaceRef))
+        guard width > 0, height > 0 else { return nil }
+
+        let cropPx = CGRect(
+            x: max(0, min(CGFloat(width - 1), normalizedCrop.origin.x * CGFloat(width))),
+            y: max(0, min(CGFloat(height - 1), normalizedCrop.origin.y * CGFloat(height))),
+            width: max(1, min(CGFloat(width), normalizedCrop.width * CGFloat(width))),
+            height: max(1, min(CGFloat(height), normalizedCrop.height * CGFloat(height)))
+        ).integral
+
+        let x0 = Int(cropPx.minX)
+        let y0 = Int(cropPx.minY)
+        let x1 = Int(min(CGFloat(width), cropPx.maxX))
+        let y1 = Int(min(CGFloat(height), cropPx.maxY))
+        guard x1 > x0, y1 > y0 else { return nil }
+
+        IOSurfaceLock(surfaceRef, [], nil)
+        defer { IOSurfaceUnlock(surfaceRef, [], nil) }
+
+        let base = IOSurfaceGetBaseAddress(surfaceRef)
+        let bytesPerRow = IOSurfaceGetBytesPerRow(surfaceRef)
+        guard bytesPerRow > 0 else { return nil }
+
+        let bytesPerPixel = 4
+        let step = 6
+        var hist = [UInt16: Int]()
+        hist.reserveCapacity(256)
+        var lumas = [Double]()
+        lumas.reserveCapacity(((x1 - x0) / step) * ((y1 - y0) / step))
+
+        for y in stride(from: y0, to: y1, by: step) {
+            let row = base.advanced(by: y * bytesPerRow)
+            for x in stride(from: x0, to: x1, by: step) {
+                let pixel = row.advanced(by: x * bytesPerPixel)
+                let b = Double(pixel.load(fromByteOffset: 0, as: UInt8.self))
+                let g = Double(pixel.load(fromByteOffset: 1, as: UInt8.self))
+                let r = Double(pixel.load(fromByteOffset: 2, as: UInt8.self))
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                lumas.append(luma)
+
+                let rq = UInt16(UInt8(r) >> 4)
+                let gq = UInt16(UInt8(g) >> 4)
+                let bq = UInt16(UInt8(b) >> 4)
+                let key = (rq << 8) | (gq << 4) | bq
+                hist[key, default: 0] += 1
+            }
+        }
+
+        guard !lumas.isEmpty else { return nil }
+        let mean = lumas.reduce(0.0, +) / Double(lumas.count)
+        let variance = lumas.reduce(0.0) { partial, value in
+            partial + ((value - mean) * (value - mean))
+        } / Double(lumas.count)
+        let modeCount = hist.values.max() ?? 0
+
+        return IOSurfaceBlankMetrics(
+            uniqueQuantized: hist.count,
+            lumaStdDev: sqrt(variance),
+            modeFraction: Double(modeCount) / Double(lumas.count)
+        )
+    }
+
+    private func currentSurfaceLooksReadyForPreservedFrameRetirement() -> Bool {
+        let topStripCrop = CGRect(x: 0.04, y: 0.01, width: 0.92, height: 0.08)
+        guard let metrics = sampleCurrentIOSurfaceBlankMetrics(normalizedCrop: topStripCrop) else {
+            return false
+        }
+        return !metrics.isProbablyBlank
+    }
+
     func preserveCurrentFrameDuringTransition(reason: String) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
@@ -6146,7 +6239,7 @@ final class GhosttySurfaceScrollView: NSView {
     }
 
     private func scheduleFramePreservationRetirementCheck(generation: UInt64, attempt: Int) {
-        let delays: [TimeInterval] = [0.016, 0.033, 0.05, 0.075, 0.11, 0.16, 0.22]
+        let delays: [TimeInterval] = [0.016, 0.033, 0.05, 0.075, 0.11, 0.16, 0.22, 0.30]
         guard attempt < delays.count else {
             hidePreservedFrameOverlay(reason: "timeout")
             return
@@ -6170,15 +6263,14 @@ final class GhosttySurfaceScrollView: NSView {
         guard !framePreservationOverlayView.isHidden else { return true }
         guard window != nil else { return true }
 
-        if !sizeApproximatelyEqual(bounds.size, framePreservationCapturedSize, epsilon: 0.5) {
-            return true
-        }
-
         let currentKey = Self.contentsKey(for: surfaceView.layer)
         guard let capturedKey = framePreservationCapturedContentsKey else {
-            return currentKey != "nil"
+            return currentKey != "nil" && currentSurfaceLooksReadyForPreservedFrameRetirement()
         }
-        return currentKey != "nil" && currentKey != capturedKey
+        guard currentKey != "nil", currentKey != capturedKey else {
+            return false
+        }
+        return currentSurfaceLooksReadyForPreservedFrameRetirement()
     }
 
     private func hidePreservedFrameOverlay(reason: String) {

@@ -24,45 +24,91 @@ final class MenuKeyEquivalentRoutingUITests: XCTestCase {
 
     func testCmdNWorksWhenWebViewFocusedAfterTabSwitch() {
         let app = launchWithBrowserSetup()
+        runMenuKeyEquivalentScenario(
+            app: app,
+            key: "n",
+            modifiers: [.command],
+            counterKey: "addTabInvocations",
+            expectedIncrement: 1,
+            timeout: 5.0,
+            failureMessage: "Expected Cmd+N to reach app menu and create a new tab even when WKWebView is first responder"
+        )
+    }
 
-        // Simulate the repro: switch away and back.
-        app.typeKey("[", modifierFlags: [.command, .shift])
-        app.typeKey("]", modifierFlags: [.command, .shift])
-
-        // Force WebKit to become first responder again (Cmd+L then Escape).
-        refocusWebView(app: app)
-
-        let baseline = loadKeyequiv()["addTabInvocations"].flatMap(Int.init) ?? 0
-        app.typeKey("n", modifierFlags: [.command])
-
-        XCTAssertTrue(
-            waitForKeyequivInt(key: "addTabInvocations", toBeAtLeast: baseline + 1, timeout: 5.0),
-            "Expected Cmd+N to reach app menu and create a new tab even when WKWebView is first responder"
+    func testGraphV1CmdNWorksWhenWebViewFocusedAfterTabSwitch() {
+        let app = launchWithBrowserSetup(useGraphV1: true)
+        runMenuKeyEquivalentScenario(
+            app: app,
+            key: "n",
+            modifiers: [.command],
+            counterKey: "addTabInvocations",
+            expectedIncrement: 1,
+            timeout: 5.0,
+            failureMessage: "Expected graph-v1 Cmd+N to reach app menu and create a new tab even when WKWebView is first responder"
         )
     }
 
     func testCmdWWorksWhenWebViewFocusedAfterTabSwitch() {
         let app = launchWithBrowserSetup()
+        runMenuKeyEquivalentScenario(
+            app: app,
+            key: "w",
+            modifiers: [.command],
+            counterKey: "closePanelInvocations",
+            expectedIncrement: 1,
+            timeout: 5.0,
+            failureMessage: "Expected Cmd+W to reach app menu and close the focused tab even when WKWebView is first responder"
+        )
+    }
 
-        // Simulate the repro: switch away and back.
-        app.typeKey("[", modifierFlags: [.command, .shift])
-        app.typeKey("]", modifierFlags: [.command, .shift])
-
-        // Force WebKit to become first responder again (Cmd+L then Escape).
-        refocusWebView(app: app)
-
-        let baseline = loadKeyequiv()["closePanelInvocations"].flatMap(Int.init) ?? 0
-        app.typeKey("w", modifierFlags: [.command])
-
-        XCTAssertTrue(
-            waitForKeyequivInt(key: "closePanelInvocations", toBeAtLeast: baseline + 1, timeout: 5.0),
-            "Expected Cmd+W to reach app menu and close the focused tab even when WKWebView is first responder"
+    func testGraphV1CmdWWorksWhenWebViewFocusedAfterTabSwitch() {
+        let app = launchWithBrowserSetup(useGraphV1: true)
+        runMenuKeyEquivalentScenario(
+            app: app,
+            key: "w",
+            modifiers: [.command],
+            counterKey: "closePanelInvocations",
+            expectedIncrement: 1,
+            timeout: 5.0,
+            failureMessage: "Expected graph-v1 Cmd+W to reach app menu and close the focused tab even when WKWebView is first responder"
         )
     }
 
     func testCmdShiftWWorksWhenWebViewFocusedAfterTabSwitch() {
         let app = launchWithBrowserSetup()
+        runMenuKeyEquivalentScenario(
+            app: app,
+            key: "w",
+            modifiers: [.command, .shift],
+            counterKey: "closeTabInvocations",
+            expectedIncrement: 1,
+            timeout: 6.0,
+            failureMessage: "Expected Cmd+Shift+W to reach app menu and close the current workspace even when WKWebView is first responder"
+        )
+    }
 
+    func testGraphV1CmdShiftWWorksWhenWebViewFocusedAfterTabSwitch() {
+        let app = launchWithBrowserSetup(useGraphV1: true)
+        runMenuKeyEquivalentScenario(
+            app: app,
+            key: "w",
+            modifiers: [.command, .shift],
+            counterKey: "closeTabInvocations",
+            expectedIncrement: 1,
+            timeout: 6.0,
+            failureMessage: "Expected graph-v1 Cmd+Shift+W to reach app menu and close the current workspace even when WKWebView is first responder"
+        )
+    }
+
+    private func runMenuKeyEquivalentScenario(
+        app: XCUIApplication,
+        key: String,
+        modifiers: XCUIElement.KeyModifierFlags,
+        counterKey: String,
+        expectedIncrement: Int,
+        timeout: TimeInterval,
+        failureMessage: String
+    ) {
         // Simulate the repro: switch away and back.
         app.typeKey("[", modifierFlags: [.command, .shift])
         app.typeKey("]", modifierFlags: [.command, .shift])
@@ -70,17 +116,20 @@ final class MenuKeyEquivalentRoutingUITests: XCTestCase {
         // Force WebKit to become first responder again (Cmd+L then Escape).
         refocusWebView(app: app)
 
-        let baseline = loadKeyequiv()["closeTabInvocations"].flatMap(Int.init) ?? 0
-        app.typeKey("w", modifierFlags: [.command, .shift])
+        let baseline = loadKeyequiv()[counterKey].flatMap(Int.init) ?? 0
+        app.typeKey(key, modifierFlags: modifiers)
 
         XCTAssertTrue(
-            waitForKeyequivInt(key: "closeTabInvocations", toBeAtLeast: baseline + 1, timeout: 6.0),
-            "Expected Cmd+Shift+W to reach app menu and close the current workspace even when WKWebView is first responder"
+            waitForKeyequivInt(key: counterKey, toBeAtLeast: baseline + expectedIncrement, timeout: timeout),
+            failureMessage
         )
     }
 
-    private func launchWithBrowserSetup() -> XCUIApplication {
+    private func launchWithBrowserSetup(useGraphV1: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
+        if useGraphV1 {
+            app.launchEnvironment["CMUX_WORKSPACE_ENGINE"] = "graph-v1"
+        }
         app.launchEnvironment["CMUX_SOCKET_PATH"] = socketPath
         app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
         app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = gotoSplitPath

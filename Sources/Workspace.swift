@@ -3207,6 +3207,8 @@ final class Workspace: Identifiable, ObservableObject {
             )
         }
 
+        AppDelegate.shared?.recordGotoSplitFocusSnapshotIfNeeded(for: self)
+
         if trigger == .terminalFirstResponder,
            panels[panelId] is TerminalPanel {
             scheduleTerminalFirstResponderReassert(panelId: panelId)
