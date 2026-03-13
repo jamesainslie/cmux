@@ -770,7 +770,11 @@ final class TerminalNotificationStore: ObservableObject {
         _ isSuppressed: Bool,
         defaults: UserDefaults = .standard
     ) {
-        defaults.set(isSuppressed, forKey: notificationSettingsPromptSuppressedKey)
+        if isSuppressed {
+            defaults.set(true, forKey: notificationSettingsPromptSuppressedKey)
+        } else {
+            defaults.removeObject(forKey: notificationSettingsPromptSuppressedKey)
+        }
     }
 
     func refreshAuthorizationStatus() {
@@ -1281,6 +1285,7 @@ final class TerminalNotificationStore: ObservableObject {
             NSWorkspace.shared.open(url)
         }
         hasPromptedForSettings = false
+        Self.setNotificationSettingsPromptSuppressed(false)
     }
 
     func setNotificationSettingsPromptSuppressedForTesting(_ isSuppressed: Bool) {

@@ -8765,6 +8765,17 @@ final class NotificationDockBadgeTests: XCTestCase {
         XCTAssertEqual(secondAlertSpy.beginSheetModalCallCount, 0)
     }
 
+    func testNotificationSettingsPromptResetClearsSuppressionState() {
+        let store = TerminalNotificationStore.shared
+
+        store.setNotificationSettingsPromptSuppressedForTesting(true)
+        XCTAssertTrue(store.isNotificationSettingsPromptSuppressedForTesting())
+
+        store.resetNotificationSettingsPromptHooksForTesting()
+
+        XCTAssertFalse(store.isNotificationSettingsPromptSuppressedForTesting())
+    }
+
     func testNotificationIndexesTrackUnreadCountsByTabAndSurface() {
         let tabA = UUID()
         let tabB = UUID()
