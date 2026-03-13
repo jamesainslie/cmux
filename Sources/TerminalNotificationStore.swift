@@ -829,6 +829,19 @@ final class TerminalNotificationStore: ObservableObject {
         return tabManager.tabs.first(where: { $0.id == tabId })
     }
 
+    private func updateSidebarPreviewAfterNotificationMutation(
+        forTabId tabId: UUID,
+        changedNotificationIds: Set<UUID>,
+        reason: String
+    ) {
+        guard !changedNotificationIds.isEmpty else { return }
+        workspace(forTabId: tabId)?.replaceSidebarPreviewIfNotificationMatches(
+            ids: changedNotificationIds,
+            replacement: latestNotification(forTabId: tabId),
+            reason: reason
+        )
+    }
+
     func addNotification(tabId: UUID, surfaceId: UUID?, title: String, subtitle: String, body: String) {
         var updated = notifications
         var idsToClear: [String] = []
@@ -863,11 +876,13 @@ final class TerminalNotificationStore: ObservableObject {
         )
         updated.insert(notification, at: 0)
         notifications = updated
-        workspace(forTabId: tabId)?.clearSidebarPreviewIfNotificationMatches(
+        let workspace = workspace(forTabId: tabId)
+        workspace?.replaceSidebarPreviewIfNotificationMatches(
             ids: removedNotificationIds,
+            replacement: notification,
             reason: "notification.replaced"
         )
-        workspace(forTabId: tabId)?.setSidebarPreview(
+        workspace?.setSidebarPreview(
             notificationId: notification.id,
             sourcePanelId: surfaceId,
             title: title,
@@ -886,22 +901,35 @@ final class TerminalNotificationStore: ObservableObject {
         var updated = notifications
         guard let index = updated.firstIndex(where: { $0.id == id }) else { return }
         guard !updated[index].isRead else { return }
+        let tabId = updated[index].tabId
         updated[index].isRead = true
         notifications = updated
+        updateSidebarPreviewAfterNotificationMutation(
+            forTabId: tabId,
+            changedNotificationIds: Set([id]),
+            reason: "notification.markRead"
+        )
         center.removeDeliveredNotificationsOffMain(withIdentifiers: [id.uuidString])
     }
 
     func markRead(forTabId tabId: UUID) {
         var updated = notifications
         var idsToClear: [String] = []
+        var changedNotificationIds: Set<UUID> = []
         for index in updated.indices {
             if updated[index].tabId == tabId && !updated[index].isRead {
                 updated[index].isRead = true
                 idsToClear.append(updated[index].id.uuidString)
+                changedNotificationIds.insert(updated[index].id)
             }
         }
         if !idsToClear.isEmpty {
             notifications = updated
+            updateSidebarPreviewAfterNotificationMutation(
+                forTabId: tabId,
+                changedNotificationIds: changedNotificationIds,
+                reason: "notification.markRead.workspace"
+            )
             center.removeDeliveredNotificationsOffMain(withIdentifiers: idsToClear)
         }
     }
@@ -909,16 +937,23 @@ final class TerminalNotificationStore: ObservableObject {
     func markRead(forTabId tabId: UUID, surfaceId: UUID?) {
         var updated = notifications
         var idsToClear: [String] = []
+        var changedNotificationIds: Set<UUID> = []
         for index in updated.indices {
             if updated[index].tabId == tabId,
                updated[index].surfaceId == surfaceId,
                !updated[index].isRead {
                 updated[index].isRead = true
                 idsToClear.append(updated[index].id.uuidString)
+                changedNotificationIds.insert(updated[index].id)
             }
         }
         if !idsToClear.isEmpty {
             notifications = updated
+            updateSidebarPreviewAfterNotificationMutation(
+                forTabId: tabId,
+                changedNotificationIds: changedNotificationIds,
+                reason: "notification.markRead.surface"
+            )
             center.removeDeliveredNotificationsOffMain(withIdentifiers: idsToClear)
             center.removePendingNotificationRequestsOffMain(withIdentifiers: idsToClear)
         }
@@ -927,28 +962,44 @@ final class TerminalNotificationStore: ObservableObject {
     func markUnread(forTabId tabId: UUID) {
         var updated = notifications
         var didChange = false
+        var changedNotificationIds: Set<UUID> = []
         for index in updated.indices {
             if updated[index].tabId == tabId, updated[index].isRead {
                 updated[index].isRead = false
                 didChange = true
+                changedNotificationIds.insert(updated[index].id)
             }
         }
         if didChange {
             notifications = updated
+            updateSidebarPreviewAfterNotificationMutation(
+                forTabId: tabId,
+                changedNotificationIds: changedNotificationIds,
+                reason: "notification.markUnread.workspace"
+            )
         }
     }
 
     func markAllRead() {
         var updated = notifications
         var idsToClear: [String] = []
+        var changedNotificationIdsByTabId: [UUID: Set<UUID>] = [:]
         for index in updated.indices {
             if !updated[index].isRead {
                 updated[index].isRead = true
                 idsToClear.append(updated[index].id.uuidString)
+                changedNotificationIdsByTabId[updated[index].tabId, default: []].insert(updated[index].id)
             }
         }
         if !idsToClear.isEmpty {
             notifications = updated
+            for (tabId, changedNotificationIds) in changedNotificationIdsByTabId {
+                updateSidebarPreviewAfterNotificationMutation(
+                    forTabId: tabId,
+                    changedNotificationIds: changedNotificationIds,
+                    reason: "notification.markRead.all"
+                )
+            }
             center.removeDeliveredNotificationsOffMain(withIdentifiers: idsToClear)
             center.removePendingNotificationRequestsOffMain(withIdentifiers: idsToClear)
         }
@@ -968,8 +1019,9 @@ final class TerminalNotificationStore: ObservableObject {
         guard updated.count != originalCount else { return }
         notifications = updated
         for tabId in affectedTabIds {
-            workspace(forTabId: tabId)?.clearSidebarPreviewIfNotificationMatches(
-                ids: removedIds,
+            updateSidebarPreviewAfterNotificationMutation(
+                forTabId: tabId,
+                changedNotificationIds: removedIds,
                 reason: "notification.removed"
             )
         }
@@ -983,8 +1035,9 @@ final class TerminalNotificationStore: ObservableObject {
         let affectedTabIds = Set(notifications.map(\.tabId))
         notifications.removeAll()
         for tabId in affectedTabIds {
-            workspace(forTabId: tabId)?.clearSidebarPreviewIfNotificationMatches(
-                ids: removedNotificationIds,
+            updateSidebarPreviewAfterNotificationMutation(
+                forTabId: tabId,
+                changedNotificationIds: removedNotificationIds,
                 reason: "notification.clearAll"
             )
         }
@@ -1007,8 +1060,9 @@ final class TerminalNotificationStore: ObservableObject {
         }
         guard !idsToClear.isEmpty else { return }
         notifications = updated
-        workspace(forTabId: tabId)?.clearSidebarPreviewIfNotificationMatches(
-            ids: removedNotificationIds,
+        updateSidebarPreviewAfterNotificationMutation(
+            forTabId: tabId,
+            changedNotificationIds: removedNotificationIds,
             reason: "notification.clearSurface"
         )
         center.removeDeliveredNotificationsOffMain(withIdentifiers: idsToClear)
@@ -1030,8 +1084,9 @@ final class TerminalNotificationStore: ObservableObject {
         }
         guard !idsToClear.isEmpty else { return }
         notifications = updated
-        workspace(forTabId: tabId)?.clearSidebarPreviewIfNotificationMatches(
-            ids: removedNotificationIds,
+        updateSidebarPreviewAfterNotificationMutation(
+            forTabId: tabId,
+            changedNotificationIds: removedNotificationIds,
             reason: "notification.clearWorkspace"
         )
         center.removeDeliveredNotificationsOffMain(withIdentifiers: idsToClear)

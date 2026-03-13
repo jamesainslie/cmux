@@ -1666,6 +1666,26 @@ final class Workspace: Identifiable, ObservableObject {
         clearSidebarPreview(reason: reason)
     }
 
+    func replaceSidebarPreviewIfNotificationMatches(
+        ids: Set<UUID>,
+        replacement: TerminalNotification?,
+        reason: String
+    ) {
+        guard let notificationId = sidebarPreviewNotificationId, ids.contains(notificationId) else {
+            return
+        }
+        guard let replacement else {
+            clearSidebarPreview(reason: reason)
+            return
+        }
+        setSidebarPreview(
+            notificationId: replacement.id,
+            sourcePanelId: replacement.surfaceId,
+            title: replacement.title,
+            body: replacement.body
+        )
+    }
+
     func applyProcessTitle(_ title: String) {
         let previousTitle = self.title
         processTitle = title
