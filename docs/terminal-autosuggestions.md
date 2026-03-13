@@ -186,6 +186,15 @@ or
 
 At minimum, `Automatic` mode should back off when zsh reports a known external provider.
 
+Do not make the app hard-code one plugin name as the only coexistence case. Treat this as a generic provider contract:
+
+1. `provider=none`
+2. `provider=cmux`
+3. `provider=external:<known-name>`
+4. `provider=external:unknown`
+
+In `Automatic`, cmux should render only for `provider=none`. Every external provider, including unknown ones, should win by default.
+
 ### What to detect in zsh
 
 Prefer behavior-level detection over dotfile-string matching.
@@ -203,6 +212,14 @@ Weak signals to avoid:
 3. assuming that a sourced file path means the plugin is actually active
 
 The official `zsh-autosuggestions` README documents both the `ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE` variable and widgets such as `autosuggest-accept`, `autosuggest-disable`, and `autosuggest-toggle`, which makes them reasonable runtime markers for `Automatic` mode.
+
+For other providers, add markers as we learn them, but keep the fallback conservative:
+
+1. if a known provider marker is present, report that provider by name
+2. if zsh shows evidence that an external autosuggestion layer owns suggestion rendering or accept widgets but the provider is not recognized, report `external:unknown`
+3. if detection is ambiguous, prefer `external:unknown` over `none`
+
+This avoids double suggestions without requiring exhaustive support for every plugin manager or custom zle script on day one.
 
 ### Default policy
 
