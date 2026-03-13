@@ -2059,10 +2059,32 @@ final class Workspace: Identifiable, ObservableObject {
         return trimmed
     }
 
-    private func inheritedWorkingDirectory(preferredPanelId: UUID?) -> String? {
+    private func inheritedWorkingDirectory(
+        preferredPanelId: UUID? = nil,
+        inPane preferredPaneId: PaneID? = nil
+    ) -> String? {
         if let preferredPanelId,
            let directory = normalizedInheritedWorkingDirectory(panelDirectories[preferredPanelId]) {
             return directory
+        }
+
+        if let preferredPanelId,
+           let requestedDirectory = normalizedInheritedWorkingDirectory(
+               terminalPanel(for: preferredPanelId)?.requestedWorkingDirectory
+           ) {
+            return requestedDirectory
+        }
+
+        if let sourceTerminal = terminalPanelForConfigInheritance(
+            preferredPanelId: preferredPanelId,
+            inPane: preferredPaneId
+        ) {
+            if let directory = normalizedInheritedWorkingDirectory(panelDirectories[sourceTerminal.id]) {
+                return directory
+            }
+            if let requestedDirectory = normalizedInheritedWorkingDirectory(sourceTerminal.requestedWorkingDirectory) {
+                return requestedDirectory
+            }
         }
 
         return normalizedInheritedWorkingDirectory(currentDirectory)
@@ -2089,7 +2111,10 @@ final class Workspace: Identifiable, ObservableObject {
 
         guard let paneId = sourcePaneId else { return nil }
         let inheritedConfig = inheritedTerminalConfig(preferredPanelId: panelId, inPane: paneId)
-        let splitWorkingDirectory = inheritedWorkingDirectory(preferredPanelId: panelId)
+        let splitWorkingDirectory = inheritedWorkingDirectory(
+            preferredPanelId: panelId,
+            inPane: paneId
+        )
 #if DEBUG
         dlog("split.cwd panelId=\(panelId.uuidString.prefix(5)) panelDir=\(panelDirectories[panelId] ?? "nil") currentDir=\(currentDirectory) resolved=\(splitWorkingDirectory ?? "nil")")
 #endif
@@ -4975,7 +5000,10 @@ extension Workspace: BonsplitDelegate {
             let originalTabs = controller.tabs(inPane: originalPane)
             let hasRealSurface = originalTabs.contains { panelIdFromSurfaceId($0.id) != nil }
             let movedPanelId = controller.selectedTab(inPane: newPane).flatMap { panelIdFromSurfaceId($0.id) }
-            let splitWorkingDirectory = inheritedWorkingDirectory(preferredPanelId: movedPanelId)
+            let splitWorkingDirectory = inheritedWorkingDirectory(
+                preferredPanelId: movedPanelId,
+                inPane: originalPane
+            )
 #if DEBUG
             dlog(
                 "split.didSplit.drag original=\(originalPane.id.uuidString.prefix(5)) " +
@@ -5068,7 +5096,10 @@ extension Workspace: BonsplitDelegate {
             preferredPanelId: sourcePanelId,
             inPane: originalPane
         )
-        let splitWorkingDirectory = inheritedWorkingDirectory(preferredPanelId: sourcePanelId)
+        let splitWorkingDirectory = inheritedWorkingDirectory(
+            preferredPanelId: sourcePanelId,
+            inPane: originalPane
+        )
 
         let newPanel = TerminalPanel(
             workspaceId: id,
