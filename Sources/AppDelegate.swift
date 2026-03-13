@@ -11555,17 +11555,32 @@ private extension NSWindow {
                let portalWebView = cmuxUniqueBrowserWebView(in: candidate) {
                 // Portal-hosted browser chrome (for example the Cmd+F overlay) is a
                 // sibling of the hosted WKWebView inside WindowBrowserSlotView, not a
-                // descendant of it. Treating every view in that slot as "web-owned"
-                // blocks legitimate first-responder changes to overlay text fields.
+                // descendant of it. Keep actual text-input chrome independent so
+                // omnibar/find fields can still focus, but continue treating other
+                // portal siblings (for example hosted inspector views) as web-owned.
                 if view === portalWebView || view.isDescendant(of: portalWebView) {
                     return portalWebView
                 }
-                return nil
+                return cmuxIsPortalTextInputChrome(view) ? nil : portalWebView
             }
             current = candidate.superview
         }
 
         return nil
+    }
+
+    private static func cmuxIsPortalTextInputChrome(_ view: NSView) -> Bool {
+        var current: NSView? = view
+        while let candidate = current {
+            if candidate is NSTextField || candidate is NSTextView {
+                return true
+            }
+            if String(describing: type(of: candidate)).contains("WindowBrowserSlotView") {
+                break
+            }
+            current = candidate.superview
+        }
+        return false
     }
 
     private static func cmuxUniqueBrowserWebView(in root: NSView) -> CmuxWebView? {
