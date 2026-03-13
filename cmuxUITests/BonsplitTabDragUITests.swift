@@ -39,6 +39,7 @@ final class BonsplitTabDragUITests: XCTestCase {
         let window = app.windows.element(boundBy: 0)
         let alphaTab = app.buttons[alphaTitle]
         let betaTab = app.buttons[betaTitle]
+        let dropIndicator = app.descendants(matching: .any).matching(identifier: "paneTabBar.dropIndicator").firstMatch
         let initialOrder = "\(alphaTitle)|\(betaTitle)"
         let reorderedOrder = "\(betaTitle)|\(alphaTitle)"
 
@@ -54,13 +55,24 @@ final class BonsplitTabDragUITests: XCTestCase {
 
         let start = CGPoint(x: betaTab.frame.midX, y: betaTab.frame.midY)
         let destination = CGPoint(x: alphaTab.frame.midX - 14, y: alphaTab.frame.midY)
-        dragMouse(
+        guard let dragSession = beginMouseDrag(
             fromAccessibilityPoint: start,
+            holdDuration: 0.20
+        ) else {
+            XCTFail("Expected raw mouse drag session to start")
+            return
+        }
+        continueMouseDrag(
+            dragSession,
             toAccessibilityPoint: destination,
             steps: 28,
-            holdDuration: 0.20,
             dragDuration: 0.45
         )
+        XCTAssertTrue(
+            waitForCondition(timeout: 2.0) { dropIndicator.exists },
+            "Expected dragging beta onto alpha to reveal the Bonsplit drop indicator."
+        )
+        endMouseDrag(dragSession, atAccessibilityPoint: destination)
 
         XCTAssertTrue(
             waitForJSONKey("trackedPaneTabTitles", equals: reorderedOrder, atPath: dataPath, timeout: 5.0) != nil,
@@ -130,14 +142,15 @@ final class BonsplitTabDragUITests: XCTestCase {
         let window = app.windows.element(boundBy: 0)
         XCTAssertTrue(window.waitForExistence(timeout: 5.0), "Expected main window to exist")
 
-        let workspaceTitle = ready["workspaceTitle"] ?? "UITest Workspace"
-        let workspaceRow = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", workspaceTitle)).firstMatch
+        let workspaceId = ready["workspaceId"] ?? ""
+        let workspaceRowIdentifier = "sidebarWorkspace.\(workspaceId)"
+        let workspaceRow = app.descendants(matching: .any).matching(identifier: workspaceRowIdentifier).firstMatch
         XCTAssertTrue(workspaceRow.waitForExistence(timeout: 5.0), "Expected workspace row to exist")
 
         let topInset = distanceToTopEdge(of: workspaceRow, in: window)
         XCTAssertGreaterThanOrEqual(
             topInset,
-            14,
+            30,
             "Expected hidden-titlebar sidebar rows to stay below the traffic lights. window=\(window.frame) workspaceRow=\(workspaceRow.frame) topInset=\(topInset)"
         )
     }
@@ -322,38 +335,54 @@ final class BonsplitTabDragUITests: XCTestCase {
         return min(gapIfOriginIsBottomLeft, gapIfOriginIsTopLeft)
     }
 
-    private func dragMouse(
+    private struct RawMouseDragSession {
+        let source: CGEventSource
+    }
+
+    private func beginMouseDrag(
         fromAccessibilityPoint start: CGPoint,
-        toAccessibilityPoint end: CGPoint,
-        steps: Int = 20,
-        holdDuration: TimeInterval = 0.15,
-        dragDuration: TimeInterval = 0.30
-    ) {
+        holdDuration: TimeInterval = 0.15
+    ) -> RawMouseDragSession? {
         let source = CGEventSource(stateID: .hidSystemState)
         XCTAssertNotNil(source, "Expected CGEventSource for raw mouse drag")
-        guard let source else { return }
+        guard let source else { return nil }
 
         let quartzStart = quartzPoint(fromAccessibilityPoint: start)
-        let quartzEnd = quartzPoint(fromAccessibilityPoint: end)
 
         postMouseEvent(type: .mouseMoved, at: quartzStart, source: source)
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 
         postMouseEvent(type: .leftMouseDown, at: quartzStart, source: source)
         RunLoop.current.run(until: Date().addingTimeInterval(holdDuration))
+        return RawMouseDragSession(source: source)
+    }
 
+    private func continueMouseDrag(
+        _ session: RawMouseDragSession,
+        toAccessibilityPoint end: CGPoint,
+        steps: Int = 20,
+        dragDuration: TimeInterval = 0.30
+    ) {
+        let currentLocation = NSEvent.mouseLocation
+        let quartzEnd = quartzPoint(fromAccessibilityPoint: end)
         let clampedSteps = max(2, steps)
         for step in 1...clampedSteps {
             let progress = CGFloat(step) / CGFloat(clampedSteps)
             let point = CGPoint(
-                x: quartzStart.x + ((quartzEnd.x - quartzStart.x) * progress),
-                y: quartzStart.y + ((quartzEnd.y - quartzStart.y) * progress)
+                x: currentLocation.x + ((quartzEnd.x - currentLocation.x) * progress),
+                y: currentLocation.y + ((quartzEnd.y - currentLocation.y) * progress)
             )
-            postMouseEvent(type: .leftMouseDragged, at: point, source: source)
+            postMouseEvent(type: .leftMouseDragged, at: point, source: session.source)
             RunLoop.current.run(until: Date().addingTimeInterval(dragDuration / Double(clampedSteps)))
         }
+    }
 
-        postMouseEvent(type: .leftMouseUp, at: quartzEnd, source: source)
+    private func endMouseDrag(
+        _ session: RawMouseDragSession,
+        atAccessibilityPoint end: CGPoint
+    ) {
+        let quartzEnd = quartzPoint(fromAccessibilityPoint: end)
+        postMouseEvent(type: .leftMouseUp, at: quartzEnd, source: session.source)
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     }
 

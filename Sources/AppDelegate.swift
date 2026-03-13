@@ -6512,6 +6512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             workspace.setPanelCustomTitle(panelId: betaPanelId, title: betaTitle)
             self.writeBonsplitTabDragUITestData([
                 "ready": "1",
+                "workspaceId": workspace.id.uuidString,
                 "workspaceTitle": workspaceTitle,
                 "alphaTitle": alphaTitle,
                 "betaTitle": betaTitle,

@@ -7180,7 +7180,7 @@ struct VerticalTabsSidebar: View {
 
     /// Space at top of sidebar for traffic light buttons
     private let trafficLightPadding: CGFloat = 28
-    private let hiddenTitlebarTrafficLightPadding: CGFloat = 18
+    @State private var hiddenTitlebarTrafficLightPadding: CGFloat = 30
     private let tabRowSpacing: CGFloat = 2
 
     private var effectiveTrafficLightPadding: CGFloat {
@@ -7282,6 +7282,14 @@ struct VerticalTabsSidebar: View {
         .background(
             WindowAccessor { window in
                 modifierKeyMonitor.setHostWindow(window)
+                guard !showWorkspaceTitlebar else { return }
+                let computedTitlebarHeight = window.frame.height - window.contentLayoutRect.height
+                let nextPadding = max(trafficLightPadding, min(52, computedTitlebarHeight + 6))
+                if abs(hiddenTitlebarTrafficLightPadding - nextPadding) > 0.5 {
+                    DispatchQueue.main.async {
+                        hiddenTitlebarTrafficLightPadding = nextPadding
+                    }
+                }
             }
             .frame(width: 0, height: 0)
         )
@@ -9997,6 +10005,7 @@ private struct TabItemView: View, Equatable {
             isHovering = hovering
         }
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sidebarWorkspace.\(tab.id.uuidString)")
         .accessibilityLabel(Text(accessibilityTitle))
         .accessibilityHint(Text(accessibilityHintText))
         .accessibilityAction(named: Text(moveUpActionText)) {
