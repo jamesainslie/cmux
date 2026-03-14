@@ -14647,6 +14647,84 @@ final class LocalWebKitBrowserSurfaceRuntimeTests: XCTestCase {
         XCTAssertEqual(replacement.appearance?.bestMatch(from: [.darkAqua, .aqua]), .darkAqua)
     }
 
+    func testAddressBarPageFocusCaptureAndRestoreRoundTripsThroughRuntime() async throws {
+        let surface = LocalWebKitBrowserSurfaceRuntime(
+            processPool: WKProcessPool(),
+            configuration: makeConfiguration(scriptSources: [])
+        )
+        let navigationFinished = expectation(description: "address bar focus page loaded")
+        surface.eventHandlers = BrowserSurfaceRuntimeEventHandlers(
+            didFinishNavigation: {
+                navigationFinished.fulfill()
+            }
+        )
+
+        surface.loadHTMLString(
+            """
+            <html><body>
+            <input id="field" value="hello" />
+            <input id="other" value="world" />
+            </body></html>
+            """,
+            baseURL: nil
+        )
+        await fulfillment(of: [navigationFinished], timeout: 5)
+
+        _ = try await surface.evaluateJavaScript(
+            """
+            const field = document.getElementById('field');
+            field.focus();
+            field.setSelectionRange(1, 4);
+            true;
+            """
+        )
+
+        let captureFinished = expectation(description: "captured page focus")
+        var captureStatus: BrowserAddressBarPageFocusCaptureStatus?
+        surface.captureAddressBarPageFocus { status in
+            captureStatus = status
+            captureFinished.fulfill()
+        }
+        await fulfillment(of: [captureFinished], timeout: 5)
+
+        guard case .captured(let capturedIdentifier)? = captureStatus else {
+            return XCTFail("Expected runtime to capture an editable page focus target")
+        }
+        XCTAssertFalse(capturedIdentifier.isEmpty)
+
+        _ = try await surface.evaluateJavaScript(
+            """
+            const other = document.getElementById('other');
+            other.focus();
+            true;
+            """
+        )
+
+        let restoreFinished = expectation(description: "restored page focus")
+        var restoreStatus: BrowserAddressBarPageFocusRestoreStatus?
+        surface.restoreAddressBarPageFocus { status in
+            restoreStatus = status
+            restoreFinished.fulfill()
+        }
+        await fulfillment(of: [restoreFinished], timeout: 5)
+
+        XCTAssertEqual(restoreStatus, .restored)
+
+        let activeElementID = try await surface.evaluateJavaScript(
+            "document.activeElement && document.activeElement.id"
+        ) as? String
+        let selectionStartValue = try await surface.evaluateJavaScript(
+            "document.getElementById('field').selectionStart"
+        ) as? NSNumber
+        let selectionEndValue = try await surface.evaluateJavaScript(
+            "document.getElementById('field').selectionEnd"
+        ) as? NSNumber
+
+        XCTAssertEqual(activeElementID, "field")
+        XCTAssertEqual(selectionStartValue?.intValue, 1)
+        XCTAssertEqual(selectionEndValue?.intValue, 4)
+    }
+
     func testStateObserverReceivesImmediateAndMutatedRuntimeState() {
         let surface = LocalWebKitBrowserSurfaceRuntime(
             processPool: WKProcessPool(),
@@ -14771,6 +14849,10 @@ final class BrowserPanelRuntimeBoundaryTests: XCTestCase {
         private(set) var lastUnderPageBackgroundColor: NSColor?
         private(set) var loadedRequests: [URLRequest] = []
         private(set) var stopLoadingCallCount = 0
+        private(set) var captureAddressBarPageFocusCallCount = 0
+        private(set) var restoreAddressBarPageFocusCallCount = 0
+        var captureAddressBarPageFocusStatus: BrowserAddressBarPageFocusCaptureStatus = .clearedNone
+        var restoreAddressBarPageFocusStatuses: [BrowserAddressBarPageFocusRestoreStatus] = [.noState]
 
         init() {
             let configuration = WKWebViewConfiguration()
@@ -14869,6 +14951,19 @@ final class BrowserPanelRuntimeBoundaryTests: XCTestCase {
 
         func evaluateJavaScript(_ script: String) async throws -> Any? {
             nil
+        }
+
+        func captureAddressBarPageFocus(completion: @escaping (BrowserAddressBarPageFocusCaptureStatus) -> Void) {
+            captureAddressBarPageFocusCallCount += 1
+            completion(captureAddressBarPageFocusStatus)
+        }
+
+        func restoreAddressBarPageFocus(completion: @escaping (BrowserAddressBarPageFocusRestoreStatus) -> Void) {
+            restoreAddressBarPageFocusCallCount += 1
+            let status = restoreAddressBarPageFocusStatuses.isEmpty
+                ? BrowserAddressBarPageFocusRestoreStatus.noState
+                : restoreAddressBarPageFocusStatuses.removeFirst()
+            completion(status)
         }
 
         func sessionHistorySnapshot() -> (backHistoryURLs: [URL], forwardHistoryURLs: [URL]) {
@@ -14981,6 +15076,40 @@ final class BrowserPanelRuntimeBoundaryTests: XCTestCase {
             updatedColor.withAlphaComponent(updatedOpacity)
         )
         _ = panel
+    }
+
+    func testBrowserPanelAddressBarSuppressionCapturesPageFocusViaRuntimeOnce() {
+        let runtime = RecordingBrowserSurfaceRuntime()
+        let panel = BrowserPanel(
+            workspaceId: UUID(),
+            runtimeFactory: RecordingBrowserSurfaceRuntimeFactory(runtime: runtime)
+        )
+
+        panel.beginSuppressWebViewFocusForAddressBar()
+        panel.beginSuppressWebViewFocusForAddressBar()
+
+        XCTAssertEqual(runtime.captureAddressBarPageFocusCallCount, 1)
+    }
+
+    func testBrowserPanelRestoreAddressBarFocusRetriesViaRuntime() async {
+        let runtime = RecordingBrowserSurfaceRuntime()
+        runtime.restoreAddressBarPageFocusStatuses = [.notFocused, .restored]
+        let panel = BrowserPanel(
+            workspaceId: UUID(),
+            runtimeFactory: RecordingBrowserSurfaceRuntimeFactory(runtime: runtime)
+        )
+        let restoreFinished = expectation(description: "runtime restore completed")
+        var didRestoreFocus = false
+
+        panel.restoreAddressBarPageFocusIfNeeded { restored in
+            didRestoreFocus = restored
+            restoreFinished.fulfill()
+        }
+
+        await fulfillment(of: [restoreFinished], timeout: 1)
+
+        XCTAssertTrue(didRestoreFocus)
+        XCTAssertEqual(runtime.restoreAddressBarPageFocusCallCount, 2)
     }
 }
 

@@ -1263,6 +1263,297 @@ struct BrowserRuntimeSurfaceConfiguration {
     let customUserAgent: String
 }
 
+enum BrowserAddressBarPageFocusCaptureStatus: Equatable {
+    case captured(String)
+    case clearedNone
+    case clearedNonEditable
+    case error
+
+    init(result: Any?, error: Error?) {
+        if error != nil {
+            self = .error
+            return
+        }
+        guard let raw = result as? String else {
+            self = .error
+            return
+        }
+        if raw == "cleared:none" {
+            self = .clearedNone
+            return
+        }
+        if raw == "cleared:noneditable" {
+            self = .clearedNonEditable
+            return
+        }
+        if raw.hasPrefix("captured:") {
+            self = .captured(String(raw.dropFirst("captured:".count)))
+            return
+        }
+        self = .error
+    }
+
+    var debugValue: String {
+        switch self {
+        case .captured(let identifier):
+            "captured:\(identifier)"
+        case .clearedNone:
+            "cleared:none"
+        case .clearedNonEditable:
+            "cleared:noneditable"
+        case .error:
+            "error"
+        }
+    }
+}
+
+enum BrowserAddressBarPageFocusRestoreStatus: String {
+    case restored
+    case noState = "no_state"
+    case missingTarget = "missing_target"
+    case notFocused = "not_focused"
+    case error
+
+    init(result: Any?, error: Error?) {
+        if error != nil {
+            self = .error
+            return
+        }
+        guard let raw = result as? String else {
+            self = .error
+            return
+        }
+        self = BrowserAddressBarPageFocusRestoreStatus(rawValue: raw) ?? .error
+    }
+}
+
+fileprivate enum BrowserAddressBarPageFocusScripts {
+    static let capture = """
+    (() => {
+      try {
+        const syncState = (state) => {
+          window.__cmuxAddressBarFocusState = state;
+          try {
+            if (window.top && window.top !== window) {
+              window.top.postMessage({ cmuxAddressBarFocusState: state }, "*");
+            } else if (window.top) {
+              window.top.__cmuxAddressBarFocusState = state;
+            }
+          } catch (_) {}
+        };
+
+        const active = document.activeElement;
+        if (!active) {
+          syncState(null);
+          return "cleared:none";
+        }
+
+        const tag = (active.tagName || "").toLowerCase();
+        const type = (active.type || "").toLowerCase();
+        const isEditable =
+          !!active.isContentEditable ||
+          tag === "textarea" ||
+          (tag === "input" && type !== "hidden");
+        if (!isEditable) {
+          syncState(null);
+          return "cleared:noneditable";
+        }
+
+        let id = active.getAttribute("data-cmux-addressbar-focus-id");
+        if (!id) {
+          id = "cmux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+          active.setAttribute("data-cmux-addressbar-focus-id", id);
+        }
+
+        const state = { id, selectionStart: null, selectionEnd: null };
+        if (typeof active.selectionStart === "number" && typeof active.selectionEnd === "number") {
+          state.selectionStart = active.selectionStart;
+          state.selectionEnd = active.selectionEnd;
+        }
+        syncState(state);
+        return "captured:" + id;
+      } catch (_) {
+        return "error";
+      }
+    })();
+    """
+
+    static let trackingBootstrap = """
+    (() => {
+      try {
+        if (window.__cmuxAddressBarFocusTrackerInstalled) return true;
+        window.__cmuxAddressBarFocusTrackerInstalled = true;
+
+        const syncState = (state) => {
+          window.__cmuxAddressBarFocusState = state;
+          try {
+            if (window.top && window.top !== window) {
+              window.top.postMessage({ cmuxAddressBarFocusState: state }, "*");
+            } else if (window.top) {
+              window.top.__cmuxAddressBarFocusState = state;
+            }
+          } catch (_) {}
+        };
+
+        if (window.top === window && !window.__cmuxAddressBarFocusMessageBridgeInstalled) {
+          window.__cmuxAddressBarFocusMessageBridgeInstalled = true;
+          window.addEventListener("message", (ev) => {
+            try {
+              const data = ev ? ev.data : null;
+              if (!data || !Object.prototype.hasOwnProperty.call(data, "cmuxAddressBarFocusState")) return;
+              window.__cmuxAddressBarFocusState = data.cmuxAddressBarFocusState || null;
+            } catch (_) {}
+          }, true);
+        }
+
+        const isEditable = (el) => {
+          if (!el) return false;
+          const tag = (el.tagName || "").toLowerCase();
+          const type = (el.type || "").toLowerCase();
+          return !!el.isContentEditable || tag === "textarea" || (tag === "input" && type !== "hidden");
+        };
+
+        const ensureFocusId = (el) => {
+          let id = el.getAttribute("data-cmux-addressbar-focus-id");
+          if (!id) {
+            id = "cmux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+            el.setAttribute("data-cmux-addressbar-focus-id", id);
+          }
+          return id;
+        };
+
+        const snapshot = (el) => {
+          if (!isEditable(el)) {
+            syncState(null);
+            return;
+          }
+          const state = {
+            id: ensureFocusId(el),
+            selectionStart: null,
+            selectionEnd: null
+          };
+          if (typeof el.selectionStart === "number" && typeof el.selectionEnd === "number") {
+            state.selectionStart = el.selectionStart;
+            state.selectionEnd = el.selectionEnd;
+          }
+          syncState(state);
+        };
+
+        document.addEventListener("focusin", (ev) => {
+          snapshot(ev && ev.target ? ev.target : document.activeElement);
+        }, true);
+        document.addEventListener("selectionchange", () => {
+          snapshot(document.activeElement);
+        }, true);
+        document.addEventListener("input", () => {
+          snapshot(document.activeElement);
+        }, true);
+        document.addEventListener("mousedown", (ev) => {
+          const target = ev && ev.target ? ev.target : null;
+          if (!isEditable(target)) {
+            syncState(null);
+          }
+        }, true);
+        window.addEventListener("beforeunload", () => {
+          syncState(null);
+        }, true);
+
+        snapshot(document.activeElement);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    })();
+    """
+
+    static let restore = """
+    (() => {
+      try {
+        const readState = () => {
+          let state = window.__cmuxAddressBarFocusState;
+          try {
+            if ((!state || typeof state.id !== "string" || !state.id) &&
+                window.top && window.top.__cmuxAddressBarFocusState) {
+              state = window.top.__cmuxAddressBarFocusState;
+            }
+          } catch (_) {}
+          return state;
+        };
+
+        const clearState = () => {
+          window.__cmuxAddressBarFocusState = null;
+          try {
+            if (window.top && window.top !== window) {
+              window.top.postMessage({ cmuxAddressBarFocusState: null }, "*");
+            } else if (window.top) {
+              window.top.__cmuxAddressBarFocusState = null;
+            }
+          } catch (_) {}
+        };
+
+        const state = readState();
+        if (!state || typeof state.id !== "string" || !state.id) {
+          return "no_state";
+        }
+
+        const selector = '[data-cmux-addressbar-focus-id="' + state.id + '"]';
+        const findTarget = (doc) => {
+          if (!doc) return null;
+          const direct = doc.querySelector(selector);
+          if (direct && direct.isConnected) return direct;
+          const frames = doc.querySelectorAll("iframe,frame");
+          for (let i = 0; i < frames.length; i += 1) {
+            const frame = frames[i];
+            try {
+              const childDoc = frame.contentDocument;
+              if (!childDoc) continue;
+              const nested = findTarget(childDoc);
+              if (nested) return nested;
+            } catch (_) {}
+          }
+          return null;
+        };
+
+        const target = findTarget(document);
+        if (!target) {
+          clearState();
+          return "missing_target";
+        }
+
+        try {
+          target.focus({ preventScroll: true });
+        } catch (_) {
+          try { target.focus(); } catch (_) {}
+        }
+
+        let focused = false;
+        try {
+          focused =
+            target === target.ownerDocument.activeElement ||
+            (typeof target.matches === "function" && target.matches(":focus"));
+        } catch (_) {}
+        if (!focused) {
+          return "not_focused";
+        }
+
+        if (
+          typeof state.selectionStart === "number" &&
+          typeof state.selectionEnd === "number" &&
+          typeof target.setSelectionRange === "function"
+        ) {
+          try {
+            target.setSelectionRange(state.selectionStart, state.selectionEnd);
+          } catch (_) {}
+        }
+        clearState();
+        return "restored";
+      } catch (_) {
+        return "error";
+      }
+    })();
+    """
+}
+
 struct BrowserSurfaceRuntimeState: Equatable {
     let currentURL: URL?
     let title: String?
@@ -1313,6 +1604,8 @@ protocol BrowserSurfaceRuntime: AnyObject {
     func setPageZoom(_ pageZoom: CGFloat)
     func takeSnapshot(completion: @escaping (NSImage?) -> Void)
     func evaluateJavaScript(_ script: String) async throws -> Any?
+    func captureAddressBarPageFocus(completion: @escaping (BrowserAddressBarPageFocusCaptureStatus) -> Void)
+    func restoreAddressBarPageFocus(completion: @escaping (BrowserAddressBarPageFocusRestoreStatus) -> Void)
     func sessionHistorySnapshot() -> (backHistoryURLs: [URL], forwardHistoryURLs: [URL])
 }
 
@@ -1470,6 +1763,18 @@ final class LocalWebKitBrowserSurfaceRuntime: BrowserSurfaceRuntime {
 
     func evaluateJavaScript(_ script: String) async throws -> Any? {
         try await webView.evaluateJavaScript(script)
+    }
+
+    func captureAddressBarPageFocus(completion: @escaping (BrowserAddressBarPageFocusCaptureStatus) -> Void) {
+        webView.evaluateJavaScript(BrowserAddressBarPageFocusScripts.capture) { result, error in
+            completion(BrowserAddressBarPageFocusCaptureStatus(result: result, error: error))
+        }
+    }
+
+    func restoreAddressBarPageFocus(completion: @escaping (BrowserAddressBarPageFocusRestoreStatus) -> Void) {
+        webView.evaluateJavaScript(BrowserAddressBarPageFocusScripts.restore) { result, error in
+            completion(BrowserAddressBarPageFocusRestoreStatus(result: result, error: error))
+        }
     }
 
     func sessionHistorySnapshot() -> (backHistoryURLs: [URL], forwardHistoryURLs: [URL]) {
@@ -1833,7 +2138,7 @@ final class BrowserPanel: Panel, ObservableObject {
         BrowserRuntimeSurfaceConfiguration(
             bootstrapUserScriptSources: [
                 telemetryHookBootstrapScriptSource,
-                addressBarFocusTrackingBootstrapScript,
+                BrowserAddressBarPageFocusScripts.trackingBootstrap,
             ],
             underPageBackgroundColor: GhosttyBackgroundTheme.currentColor(),
             customUserAgent: BrowserUserAgentSettings.safariUserAgent
@@ -1866,228 +2171,6 @@ final class BrowserPanel: Panel, ObservableObject {
     private var suppressWebViewFocusForAddressBar: Bool = false
     private var addressBarFocusRestoreGeneration: UInt64 = 0
     private let blankURLString = "about:blank"
-    private static let addressBarFocusCaptureScript = """
-    (() => {
-      try {
-        const syncState = (state) => {
-          window.__cmuxAddressBarFocusState = state;
-          try {
-            if (window.top && window.top !== window) {
-              window.top.postMessage({ cmuxAddressBarFocusState: state }, "*");
-            } else if (window.top) {
-              window.top.__cmuxAddressBarFocusState = state;
-            }
-          } catch (_) {}
-        };
-
-        const active = document.activeElement;
-        if (!active) {
-          syncState(null);
-          return "cleared:none";
-        }
-
-        const tag = (active.tagName || "").toLowerCase();
-        const type = (active.type || "").toLowerCase();
-        const isEditable =
-          !!active.isContentEditable ||
-          tag === "textarea" ||
-          (tag === "input" && type !== "hidden");
-        if (!isEditable) {
-          syncState(null);
-          return "cleared:noneditable";
-        }
-
-        let id = active.getAttribute("data-cmux-addressbar-focus-id");
-        if (!id) {
-          id = "cmux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-          active.setAttribute("data-cmux-addressbar-focus-id", id);
-        }
-
-        const state = { id, selectionStart: null, selectionEnd: null };
-        if (typeof active.selectionStart === "number" && typeof active.selectionEnd === "number") {
-          state.selectionStart = active.selectionStart;
-          state.selectionEnd = active.selectionEnd;
-        }
-        syncState(state);
-        return "captured:" + id;
-      } catch (_) {
-        return "error";
-      }
-    })();
-    """
-    private static let addressBarFocusTrackingBootstrapScript = """
-    (() => {
-      try {
-        if (window.__cmuxAddressBarFocusTrackerInstalled) return true;
-        window.__cmuxAddressBarFocusTrackerInstalled = true;
-
-        const syncState = (state) => {
-          window.__cmuxAddressBarFocusState = state;
-          try {
-            if (window.top && window.top !== window) {
-              window.top.postMessage({ cmuxAddressBarFocusState: state }, "*");
-            } else if (window.top) {
-              window.top.__cmuxAddressBarFocusState = state;
-            }
-          } catch (_) {}
-        };
-
-        if (window.top === window && !window.__cmuxAddressBarFocusMessageBridgeInstalled) {
-          window.__cmuxAddressBarFocusMessageBridgeInstalled = true;
-          window.addEventListener("message", (ev) => {
-            try {
-              const data = ev ? ev.data : null;
-              if (!data || !Object.prototype.hasOwnProperty.call(data, "cmuxAddressBarFocusState")) return;
-              window.__cmuxAddressBarFocusState = data.cmuxAddressBarFocusState || null;
-            } catch (_) {}
-          }, true);
-        }
-
-        const isEditable = (el) => {
-          if (!el) return false;
-          const tag = (el.tagName || "").toLowerCase();
-          const type = (el.type || "").toLowerCase();
-          return !!el.isContentEditable || tag === "textarea" || (tag === "input" && type !== "hidden");
-        };
-
-        const ensureFocusId = (el) => {
-          let id = el.getAttribute("data-cmux-addressbar-focus-id");
-          if (!id) {
-            id = "cmux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-            el.setAttribute("data-cmux-addressbar-focus-id", id);
-          }
-          return id;
-        };
-
-        const snapshot = (el) => {
-          if (!isEditable(el)) {
-            syncState(null);
-            return;
-          }
-          const state = {
-            id: ensureFocusId(el),
-            selectionStart: null,
-            selectionEnd: null
-          };
-          if (typeof el.selectionStart === "number" && typeof el.selectionEnd === "number") {
-            state.selectionStart = el.selectionStart;
-            state.selectionEnd = el.selectionEnd;
-          }
-          syncState(state);
-        };
-
-        document.addEventListener("focusin", (ev) => {
-          snapshot(ev && ev.target ? ev.target : document.activeElement);
-        }, true);
-        document.addEventListener("selectionchange", () => {
-          snapshot(document.activeElement);
-        }, true);
-        document.addEventListener("input", () => {
-          snapshot(document.activeElement);
-        }, true);
-        document.addEventListener("mousedown", (ev) => {
-          const target = ev && ev.target ? ev.target : null;
-          if (!isEditable(target)) {
-            syncState(null);
-          }
-        }, true);
-        window.addEventListener("beforeunload", () => {
-          syncState(null);
-        }, true);
-
-        snapshot(document.activeElement);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    })();
-    """
-    private static let addressBarFocusRestoreScript = """
-    (() => {
-      try {
-        const readState = () => {
-          let state = window.__cmuxAddressBarFocusState;
-          try {
-            if ((!state || typeof state.id !== "string" || !state.id) &&
-                window.top && window.top.__cmuxAddressBarFocusState) {
-              state = window.top.__cmuxAddressBarFocusState;
-            }
-          } catch (_) {}
-          return state;
-        };
-
-        const clearState = () => {
-          window.__cmuxAddressBarFocusState = null;
-          try {
-            if (window.top && window.top !== window) {
-              window.top.postMessage({ cmuxAddressBarFocusState: null }, "*");
-            } else if (window.top) {
-              window.top.__cmuxAddressBarFocusState = null;
-            }
-          } catch (_) {}
-        };
-
-        const state = readState();
-        if (!state || typeof state.id !== "string" || !state.id) {
-          return "no_state";
-        }
-
-        const selector = '[data-cmux-addressbar-focus-id="' + state.id + '"]';
-        const findTarget = (doc) => {
-          if (!doc) return null;
-          const direct = doc.querySelector(selector);
-          if (direct && direct.isConnected) return direct;
-          const frames = doc.querySelectorAll("iframe,frame");
-          for (let i = 0; i < frames.length; i += 1) {
-            const frame = frames[i];
-            try {
-              const childDoc = frame.contentDocument;
-              if (!childDoc) continue;
-              const nested = findTarget(childDoc);
-              if (nested) return nested;
-            } catch (_) {}
-          }
-          return null;
-        };
-
-        const target = findTarget(document);
-        if (!target) {
-          clearState();
-          return "missing_target";
-        }
-
-        try {
-          target.focus({ preventScroll: true });
-        } catch (_) {
-          try { target.focus(); } catch (_) {}
-        }
-
-        let focused = false;
-        try {
-          focused =
-            target === target.ownerDocument.activeElement ||
-            (typeof target.matches === "function" && target.matches(":focus"));
-        } catch (_) {}
-        if (!focused) {
-          return "not_focused";
-        }
-
-        if (
-          typeof state.selectionStart === "number" &&
-          typeof state.selectionEnd === "number" &&
-          typeof target.setSelectionRange === "function"
-        ) {
-          try {
-            target.setSelectionRange(state.selectionStart, state.selectionEnd);
-          } catch (_) {}
-        }
-        clearState();
-        return "restored";
-      } catch (_) {
-        return "error";
-      }
-    })();
-    """
 
     /// Published URL being displayed
     @Published private(set) var currentURL: URL?
@@ -4230,44 +4313,18 @@ extension BrowserPanel {
     }
 
     private func captureAddressBarPageFocusIfNeeded() {
-        webView.evaluateJavaScript(Self.addressBarFocusCaptureScript) { [weak self] result, error in
+        runtime.captureAddressBarPageFocus { [weak self] status in
 #if DEBUG
             guard let self else { return }
-            if let error {
-                dlog(
-                    "browser.focus.addressBar.capture panel=\(self.id.uuidString.prefix(5)) " +
-                    "result=error message=\(error.localizedDescription)"
-                )
-                return
-            }
-            let resultValue = (result as? String) ?? "unknown"
             dlog(
                 "browser.focus.addressBar.capture panel=\(self.id.uuidString.prefix(5)) " +
-                "result=\(resultValue)"
+                "result=\(status.debugValue)"
             )
 #else
             _ = self
-            _ = result
-            _ = error
+            _ = status
 #endif
         }
-    }
-
-    private enum AddressBarPageFocusRestoreStatus: String {
-        case restored
-        case noState = "no_state"
-        case missingTarget = "missing_target"
-        case notFocused = "not_focused"
-        case error
-    }
-
-    private static func addressBarPageFocusRestoreStatus(
-        from result: Any?,
-        error: Error?
-    ) -> AddressBarPageFocusRestoreStatus {
-        if error != nil { return .error }
-        guard let raw = result as? String else { return .error }
-        return AddressBarPageFocusRestoreStatus(rawValue: raw) ?? .error
     }
 
     func invalidateAddressBarPageFocusRestoreAttempts() {
@@ -4302,7 +4359,7 @@ extension BrowserPanel {
             completion(false)
             return
         }
-        webView.evaluateJavaScript(Self.addressBarFocusRestoreScript) { [weak self] result, error in
+        runtime.restoreAddressBarPageFocus { [weak self] status in
             guard let self else {
                 completion(false)
                 return
@@ -4312,23 +4369,14 @@ extension BrowserPanel {
                 return
             }
 
-            let status = Self.addressBarPageFocusRestoreStatus(from: result, error: error)
             let canRetry = (status == .notFocused || status == .error)
             let hasNextAttempt = attempt + 1 < delays.count
 
 #if DEBUG
-            if let error {
-                dlog(
-                    "browser.focus.addressBar.restore panel=\(self.id.uuidString.prefix(5)) " +
-                    "attempt=\(attempt) status=\(status.rawValue) " +
-                    "message=\(error.localizedDescription)"
-                )
-            } else {
-                dlog(
-                    "browser.focus.addressBar.restore panel=\(self.id.uuidString.prefix(5)) " +
-                    "attempt=\(attempt) status=\(status.rawValue)"
-                )
-            }
+            dlog(
+                "browser.focus.addressBar.restore panel=\(self.id.uuidString.prefix(5)) " +
+                "attempt=\(attempt) status=\(status.rawValue)"
+            )
 #endif
 
             if status == .restored {
