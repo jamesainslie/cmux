@@ -3679,6 +3679,7 @@ final class TerminalFindShortcutRoutingTests: XCTestCase {
     }
 
     func testCommandFFiresMenuShortcutBeforeGhosttyBinding() {
+        _ = NSApplication.shared
         let previousMenu = NSApp.mainMenu
         defer { NSApp.mainMenu = previousMenu }
 
