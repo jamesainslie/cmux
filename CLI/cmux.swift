@@ -1641,7 +1641,7 @@ struct CMUXCLI {
             let wsId = try resolveSidebarWorkspaceId(workspaceFlag: wsFlag, windowId: windowId, client: client)
             var socketCmd = "report_meta_block \(key)"
             if let priority { socketCmd += " --priority=\(socketQuote(priority))" }
-            socketCmd += " --tab=\(wsId) -- \(socketQuote(markdown))"
+            socketCmd += " --tab=\(wsId) -- \(socketLiteralPayload(markdown))"
             let response = try sendV1Command(socketCmd, client: client)
             print(response)
 
@@ -5471,6 +5471,14 @@ struct CMUXCLI {
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "\\r")
         return "\"\(escaped)\""
+    }
+
+    /// Preserve literal markdown after a ` -- ` separator while still keeping
+    /// the single-line socket framing intact.
+    private func socketLiteralPayload(_ s: String) -> String {
+        s
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
     }
 
     private func parseOption(_ args: [String], name: String) -> (String?, [String]) {
