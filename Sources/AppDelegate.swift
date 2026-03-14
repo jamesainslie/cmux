@@ -7070,9 +7070,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
             let browserPanel = workspace.panels.values.compactMap { $0 as? BrowserPanel }.first
             let otherTerminal = workspace.panels.values.compactMap { $0 as? TerminalPanel }.first
-            let browserSnapshot = browserPanel.flatMap {
-                BrowserWindowPortalRegistry.debugSnapshot(for: $0.webView)
-            }
+            let browserSnapshot = browserPanel?.debugPortalSnapshot()
 
             var updates = self.gotoSplitFindStateSnapshot(for: workspace)
             updates["splitZoomedAfterToggle"] = workspace.bonsplitController.isSplitZoomed ? "true" : "false"
@@ -8697,7 +8695,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let firstResponderType = keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
         let panel = tabManager?.focusedBrowserPanel
         let panelToken = panel.map { String($0.id.uuidString.prefix(8)) } ?? "nil"
-        let panelZoom = panel?.webView.pageZoom ?? -1
+        let panelZoom = panel?.surfacePageZoom() ?? -1
         var line =
             "zoom.shortcut stage=\(stage) event=\(NSWindow.keyDescription(event)) " +
             "chars='\(chars)' flags=\(browserZoomShortcutTraceFlagsString(flags)) " +

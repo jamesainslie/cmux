@@ -15880,6 +15880,45 @@ final class BrowserPanelRuntimeBoundaryTests: XCTestCase {
         XCTAssertFalse(panelWindow.firstResponder === responder)
     }
 
+    func testBrowserPanelSurfacePageZoomUsesRuntimeState() {
+        let runtime = RecordingBrowserSurfaceRuntime()
+        runtime.state = makeRuntimeState(pageZoom: 1.65)
+        let panel = BrowserPanel(
+            workspaceId: UUID(),
+            runtimeFactory: RecordingBrowserSurfaceRuntimeFactory(runtime: runtime)
+        )
+
+        XCTAssertEqual(panel.surfacePageZoom(), 1.65, accuracy: 0.001)
+    }
+
+    func testBrowserPanelDebugPortalSnapshotUsesPanelSurface() {
+        let panel = BrowserPanel(workspaceId: UUID())
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 180),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let host = NSView(frame: window.contentView?.bounds ?? .zero)
+        host.autoresizingMask = [.width, .height]
+        let anchor = NSView(frame: NSRect(x: 20, y: 30, width: 140, height: 90))
+        host.addSubview(anchor)
+        window.contentView = host
+
+        BrowserWindowPortalRegistry.bind(webView: panel.webView, to: anchor, visibleInUI: true, zPriority: 1)
+        BrowserWindowPortalRegistry.synchronizeForAnchor(anchor)
+        defer { BrowserWindowPortalRegistry.detach(webView: panel.webView) }
+
+        let snapshot = panel.debugPortalSnapshot()
+
+        XCTAssertEqual(snapshot?.visibleInUI, true)
+        XCTAssertEqual(snapshot?.containerHidden, false)
+        XCTAssertEqual(snapshot?.frameInWindow.origin.x ?? 0, 20, accuracy: 0.5)
+        XCTAssertEqual(snapshot?.frameInWindow.origin.y ?? 0, 30, accuracy: 0.5)
+        XCTAssertEqual(snapshot?.frameInWindow.width ?? 0, 140, accuracy: 0.5)
+        XCTAssertEqual(snapshot?.frameInWindow.height ?? 0, 90, accuracy: 0.5)
+    }
+
     func testBrowserPanelResponderPolicyUsesRuntimeBoundary() {
         let runtime = RecordingBrowserSurfaceRuntime()
         let panel = BrowserPanel(

@@ -4301,6 +4301,10 @@ extension BrowserPanel {
         runtime.isHiddenOrHasHiddenAncestor()
     }
 
+    func surfacePageZoom() -> CGFloat {
+        runtime.state.pageZoom
+    }
+
     func isSurfaceBlankForAutofocus() -> Bool {
         guard let url = runtime.state.currentURL else { return true }
         return url.absoluteString == blankURLString
@@ -4339,6 +4343,10 @@ extension BrowserPanel {
         let movedToSurface = focusSurfaceForHandoff()
         let movedToNil = movedToSurface ? false : window.makeFirstResponder(nil)
         return (movedToSurface, movedToNil)
+    }
+
+    func debugPortalSnapshot() -> BrowserWindowPortalRegistry.DebugSnapshot? {
+        BrowserWindowPortalRegistry.debugSnapshot(for: webView)
     }
 
     func suppressOmnibarAutofocus(for seconds: TimeInterval) {
