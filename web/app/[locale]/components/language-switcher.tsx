@@ -1,11 +1,12 @@
 "use client";
 
-import { useLocale } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useRouter, usePathname } from "../../../i18n/navigation";
 import { locales, localeNames, type Locale } from "../../../i18n/routing";
 
 export function LanguageSwitcher() {
   const locale = useLocale() as Locale;
+  const t = useTranslations("footer");
   const router = useRouter();
   const pathname = usePathname();
 
@@ -35,12 +36,12 @@ export function LanguageSwitcher() {
         <path d="M2 12h20" />
         <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
       </svg>
-      <div className="relative min-w-[7.5rem]">
+      <div className="relative w-40">
         <select
           value={locale}
           onChange={onChange}
           className="block w-full appearance-none bg-transparent border-none pr-5 text-xs cursor-pointer transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-          aria-label="Language"
+          aria-label={t("language")}
         >
           {locales.map((loc) => (
             <option key={loc} value={loc}>
