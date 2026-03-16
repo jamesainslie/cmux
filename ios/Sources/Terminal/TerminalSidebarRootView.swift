@@ -467,6 +467,7 @@ private struct TerminalWorkspaceConversationRow: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .accessibilityIdentifier("terminal.workspace.preview.\(workspace.id.uuidString)")
                 }
 
                 if let lastError = workspace.lastError, workspace.phase == .failed {

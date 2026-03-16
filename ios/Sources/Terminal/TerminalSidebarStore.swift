@@ -1320,6 +1320,35 @@ extension TerminalSidebarStore {
             eagerlyRestoreSessions: false
         )
     }
+
+    static func uiTestInputFixture() -> TerminalSidebarStore {
+        let host = TerminalHost(
+            stableID: "cmux-input",
+            name: "Input Fixture",
+            hostname: "fixture",
+            username: "cmux",
+            symbolName: "keyboard",
+            palette: .sky,
+            sortIndex: 0,
+            source: .custom,
+            transportPreference: .rawSSH
+        )
+        let snapshot = TerminalStoreSnapshot(
+            hosts: [host],
+            workspaces: [],
+            selectedWorkspaceID: nil
+        )
+        let snapshotStore = InMemoryTerminalSnapshotStore(snapshot: snapshot)
+        let credentialsStore = InMemoryTerminalCredentialsStore(passwords: [host.id: "fixture"])
+        return TerminalSidebarStore(
+            snapshotStore: snapshotStore,
+            credentialsStore: credentialsStore,
+            transportFactory: TerminalUITestInputTransportFactory(),
+            serverDiscovery: nil,
+            networkPathMonitor: nil,
+            eagerlyRestoreSessions: false
+        )
+    }
 }
 
 private struct TerminalUITestDirectReconnectTransportFactory: TerminalTransportFactory {
@@ -1343,6 +1372,34 @@ private struct TerminalUITestConnectedTransportFactory: TerminalTransportFactory
         resumeState: TerminalRemoteDaemonResumeState?
     ) -> TerminalTransport {
         TerminalUITestConnectedTransport()
+    }
+}
+
+enum TerminalUITestEchoFormatter {
+    static func preview(for data: Data) -> String {
+        if data == Data([0x09]) {
+            return "[TAB]"
+        }
+        if data == Data([0x1B]) {
+            return "[ESC]"
+        }
+        if let string = String(data: data, encoding: .utf8),
+           !string.isEmpty,
+           string.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
+            return string
+        }
+        return data.map { String(format: "%02X", $0) }.joined(separator: " ")
+    }
+}
+
+private struct TerminalUITestInputTransportFactory: TerminalTransportFactory {
+    func makeTransport(
+        host: TerminalHost,
+        credentials: TerminalSSHCredentials,
+        sessionName: String,
+        resumeState: TerminalRemoteDaemonResumeState?
+    ) -> TerminalTransport {
+        TerminalUITestInputTransport()
     }
 }
 
@@ -1402,6 +1459,24 @@ private final class TerminalUITestConnectedTransport: TerminalTransport, @unchec
     }
 
     func send(_ data: Data) async throws {}
+
+    func resize(_ size: TerminalGridSize) async {}
+
+    func disconnect() async {}
+}
+
+private final class TerminalUITestInputTransport: TerminalTransport, @unchecked Sendable {
+    var eventHandler: (@Sendable (TerminalTransportEvent) -> Void)?
+
+    func connect(initialSize: TerminalGridSize) async throws {
+        eventHandler?(.connected)
+        eventHandler?(.output(Data("cmux@fixture:~$ ".utf8)))
+    }
+
+    func send(_ data: Data) async throws {
+        let preview = TerminalUITestEchoFormatter.preview(for: data)
+        eventHandler?(.output(Data(preview.utf8)))
+    }
 
     func resize(_ size: TerminalGridSize) async {}
 

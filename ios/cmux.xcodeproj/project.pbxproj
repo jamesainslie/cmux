@@ -34,6 +34,7 @@
 		40FDF9AA8CA2215311B9E5D2 /* AuthError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 263881D640CF9D1EEC1D093E /* AuthError.swift */; };
 		4A4D281FC297CF88E42279DB /* TerminalDaemonTicketService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13026270BE423ED61F7CFF2A /* TerminalDaemonTicketService.swift */; };
 		506B3981B0CDF6B2E5759793 /* TerminalRemoteDaemonBootstrapTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09845253A2CD1B748C97D0AA /* TerminalRemoteDaemonBootstrapTransport.swift */; };
+		529012C6A6B315FBC724D0B8 /* TerminalUITestEchoFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED8D263F56720361D366955 /* TerminalUITestEchoFormatterTests.swift */; };
 		546B55F43E170A912E2EC394 /* UITestMockData.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79B9D0409D6912DC37DC5B0 /* UITestMockData.swift */; };
 		5479917679421FDD8C3C2995 /* ChatFix4_ScrollViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */; };
 		552BD8E20BD5EF0D6978E7D3 /* TerminalRemoteDaemonBootstrapSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF69F5CA6E10CD6AB4B14E32 /* TerminalRemoteDaemonBootstrapSession.swift */; };
@@ -96,6 +97,7 @@
 		D593A476423097F95F227570 /* ChatFix2_InputBarHeightOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */; };
 		D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D367AC3D322118AE559DBF /* AuthManager.swift */; };
 		D8A1B4B558D251DE7BF82D4A /* InputPillVisibilityAssertions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FADE32B7A47A43C3608972AC /* InputPillVisibilityAssertions.swift */; };
+		DC0583471064815FF6FE71CE /* TerminalInputUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE13213115B51A10F0970460 /* TerminalInputUITests.swift */; };
 		DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */; };
 		DD0311DAE14E36ADFFD82BA7 /* TerminalDirectDaemonClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9566325CEFAAF2297A4320B4 /* TerminalDirectDaemonClientTests.swift */; };
 		E3FA94BC78BB51AAFD61D055 /* CMUXAuthCore in Frameworks */ = {isa = PBXBuildFile; productRef = 81DC3D6788E64B002C6B080E /* CMUXAuthCore */; };
@@ -167,6 +169,7 @@
 		46410B90D2F45E6882E585AD /* cmux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = cmux.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4873F8C34F5557AD1E6F6CF3 /* DebugLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogStore.swift; sourceTree = "<group>"; };
 		4A6F50FA00DCA45209FE3C4D /* TerminalRemoteDaemonBootstrapTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRemoteDaemonBootstrapTransportTests.swift; sourceTree = "<group>"; };
+		4ED8D263F56720361D366955 /* TerminalUITestEchoFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalUITestEchoFormatterTests.swift; sourceTree = "<group>"; };
 		4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConfig.swift; sourceTree = "<group>"; };
 		50F830DDD1823CAE0E4D0CD2 /* cmuxd-remote */ = {isa = PBXFileReference; path = "cmuxd-remote"; sourceTree = "<group>"; };
 		53284AC109063E406D6F0304 /* TerminalServerCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalServerCatalog.swift; sourceTree = "<group>"; };
@@ -218,6 +221,7 @@
 		B87CA70AD58D024077E85845 /* DebugInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugInputBar.swift; sourceTree = "<group>"; };
 		BAD03EB210A4715A9AAA35B3 /* cmuxTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = cmuxTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
+		BE13213115B51A10F0970460 /* TerminalInputUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalInputUITests.swift; sourceTree = "<group>"; };
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
 		BF2A5F96F101FD1746C3FB91 /* TerminalBackendContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalBackendContracts.swift; sourceTree = "<group>"; };
 		C032FB689174A5691978BF3C /* InputStrategyLabUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputStrategyLabUITests.swift; sourceTree = "<group>"; };
@@ -323,6 +327,7 @@
 				10453F655BBD1B9BA56E633B /* TerminalSidebarStoreTests.swift */,
 				B1032CDFED9B211EDD9B0E14 /* TerminalSSHPrivateKeyParserTests.swift */,
 				28D639E6992408AFD926D7AD /* TerminalTextInputPipelineTests.swift */,
+				4ED8D263F56720361D366955 /* TerminalUITestEchoFormatterTests.swift */,
 				2B426546C011580A0014F89F /* ToolCallFormattingTests.swift */,
 			);
 			path = cmuxTests;
@@ -343,6 +348,7 @@
 				AB6598621689AE13A02FE2B9 /* TerminalHomeUITests.swift */,
 				06DC281E643F44D11704E22E /* TerminalHostEditorUITests.swift */,
 				C173F2D34FADBC7C8F7BC8B7 /* TerminalInboxUITests.swift */,
+				BE13213115B51A10F0970460 /* TerminalInputUITests.swift */,
 				B04A72C0E65996D39B749EC4 /* TerminalReconnectUITests.swift */,
 			);
 			path = cmuxUITests;
@@ -787,6 +793,7 @@
 				6D697DF3D11308026F0F628D /* TerminalHomeUITests.swift in Sources */,
 				315BB4226F61F35953EB8CB8 /* TerminalHostEditorUITests.swift in Sources */,
 				0F468796CD8AECF1D58004E3 /* TerminalInboxUITests.swift in Sources */,
+				DC0583471064815FF6FE71CE /* TerminalInputUITests.swift in Sources */,
 				CEADBC899865019DA2333129 /* TerminalReconnectUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -817,6 +824,7 @@
 				87604A0FF2E199441D677A91 /* TerminalSessionControllerTests.swift in Sources */,
 				7CEB70A3CBC95288F0E89525 /* TerminalSidebarStoreTests.swift in Sources */,
 				B0D54FA54A22B339C183AFE8 /* TerminalTextInputPipelineTests.swift in Sources */,
+				529012C6A6B315FBC724D0B8 /* TerminalUITestEchoFormatterTests.swift in Sources */,
 				3DE7F3A79D502AEDDC40CB8C /* ToolCallFormattingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

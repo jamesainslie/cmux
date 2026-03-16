@@ -129,7 +129,7 @@ jobs:
           RESULT_BUNDLE="$RUNNER_TEMP/cmux-ios-e2e.xcresult"
           rm -rf "$DERIVED_DATA" "$RESULT_BUNDLE"
           if [ "${{ github.event_name }}" = "push" ]; then
-            TEST_FILTERS=("TerminalHomeUITests" "TerminalHostEditorUITests" "TerminalInboxUITests" "TerminalReconnectUITests" "AuthPersistenceUITests")
+            TEST_FILTERS=("TerminalHomeUITests" "TerminalHostEditorUITests" "TerminalInboxUITests" "TerminalInputUITests" "TerminalReconnectUITests" "AuthPersistenceUITests")
           else
             TEST_FILTERS=("$TEST_FILTER")
           fi

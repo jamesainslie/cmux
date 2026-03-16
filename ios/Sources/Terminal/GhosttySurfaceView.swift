@@ -222,6 +222,27 @@ enum TerminalInputAccessoryAction: Int, CaseIterable {
         }
     }
 
+    var accessibilityIdentifier: String {
+        switch self {
+        case .control:
+            return "terminal.inputAccessory.control"
+        case .alternate:
+            return "terminal.inputAccessory.alt"
+        case .escape:
+            return "terminal.inputAccessory.escape"
+        case .tab:
+            return "terminal.inputAccessory.tab"
+        case .upArrow:
+            return "terminal.inputAccessory.up"
+        case .downArrow:
+            return "terminal.inputAccessory.down"
+        case .leftArrow:
+            return "terminal.inputAccessory.left"
+        case .rightArrow:
+            return "terminal.inputAccessory.right"
+        }
+    }
+
     var output: Data? {
         switch self {
         case .control, .alternate:
@@ -658,6 +679,7 @@ final class TerminalInputTextView: UITextView {
                 item.tintColor = .systemBlue
             }
             item.tag = action.rawValue
+            item.accessibilityIdentifier = action.accessibilityIdentifier
             items.append(item)
 
             if index != TerminalInputAccessoryAction.allCases.index(before: TerminalInputAccessoryAction.allCases.endIndex) {
