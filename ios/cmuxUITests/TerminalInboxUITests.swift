@@ -46,6 +46,23 @@ final class TerminalInboxUITests: XCTestCase {
         )
     }
 
+    func testInboxFixtureSelectionUpdatesWorkspaceDetail() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_UITEST_TERMINAL_INBOX_FIXTURE"] = "1"
+        app.launch()
+
+        let detail = app.otherElements["terminal.workspace.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 6), "Expected terminal detail for the selected workspace")
+        XCTAssertTrue(app.navigationBars["Mac mini"].waitForExistence(timeout: 2), "Expected selected workspace title on launch")
+
+        let olderWorkspace = app.buttons["terminal.workspace.\(Fixture.olderWorkspaceID)"]
+        XCTAssertTrue(olderWorkspace.waitForExistence(timeout: 2), "Expected older workspace row")
+        olderWorkspace.tap()
+
+        XCTAssertTrue(app.navigationBars["Linux VM"].waitForExistence(timeout: 4), "Expected tapped workspace title")
+        XCTAssertTrue(detail.exists, "Expected terminal detail to stay visible after switching workspaces")
+    }
+
     func testInboxFixtureSwipeUnreadMarksWorkspaceUnread() {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_UITEST_TERMINAL_INBOX_FIXTURE"] = "1"
