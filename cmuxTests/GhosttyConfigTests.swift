@@ -703,6 +703,40 @@ final class GhosttyConfigurationErrorsPresentationTests: XCTestCase {
             ["font-size nope: invalid value"]
         )
     }
+
+    func testSynchronizeReopensDismissedWarningsForExplicitReload() {
+        let presenter = PresenterSpy()
+
+        GhosttyConfigurationErrors.synchronize(
+            ["background-opacity 1: unknown field"],
+            presenter: presenter
+        )
+
+        presenter.isShowingConfigurationErrors = false
+
+        GhosttyConfigurationErrors.synchronize(
+            ["background-opacity 1: unknown field"],
+            presenter: presenter,
+            trigger: .explicitReload
+        )
+
+        XCTAssertEqual(presenter.showCount, 2)
+        XCTAssertEqual(
+            presenter.displayedErrors,
+            ["background-opacity 1: unknown field"]
+        )
+    }
+
+    func testConfigurationErrorsTriggerTreatsCmdShiftCommaAsExplicitReload() {
+        XCTAssertEqual(
+            GhosttyApp.configurationErrorsTrigger(forReloadSource: "shortcut.cmd_shift_comma"),
+            .explicitReload
+        )
+        XCTAssertEqual(
+            GhosttyApp.configurationErrorsTrigger(forReloadSource: "appearanceSync:system"),
+            .automatic
+        )
+    }
 }
 
 final class WorkspaceChromeThemeTests: XCTestCase {
