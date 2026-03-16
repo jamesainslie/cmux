@@ -233,7 +233,8 @@ class UpdateDriver: NSObject, SPUUserDriver {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard case .checking = self.viewModel.state else { return }
-            self.setState(.notFound(.init(acknowledgement: {})))
+            self.checkTimeoutWorkItem = nil
+            UpdateLogStore.shared.append(String(format: "check still pending after %.1fs", self.timing.checkTimeoutDuration))
         }
         checkTimeoutWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + timing.checkTimeoutDuration, execute: workItem)
