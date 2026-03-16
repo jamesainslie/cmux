@@ -11,6 +11,7 @@
 		0394710E6345FB8CA6E6D3E2 /* TerminalRemoteDaemonSessionTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC6C4A684BF81437C56D0B63 /* TerminalRemoteDaemonSessionTransportTests.swift */; };
 		0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE5CB8A89417C399DB8D166 /* ChatView.swift */; };
 		0E13E7170B1309E70A837976 /* TerminalServerDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AB7F6EDF5EAD33D2999B65 /* TerminalServerDiscoveryTests.swift */; };
+		0F468796CD8AECF1D58004E3 /* TerminalInboxUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C173F2D34FADBC7C8F7BC8B7 /* TerminalInboxUITests.swift */; };
 		1213CAB1F473B2E96C721DD2 /* GhosttySurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E328A139A850C17BC15CF66D /* GhosttySurfaceView.swift */; };
 		16C02A0973FA8B3803D42649 /* TerminalRemoteDaemonBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A6987D4D8BBDFF129D00239 /* TerminalRemoteDaemonBootstrapTests.swift */; };
 		1AB68DA70F76F585B6332F68 /* KeyboardSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */; };
@@ -218,6 +219,7 @@
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
 		BF2A5F96F101FD1746C3FB91 /* TerminalBackendContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalBackendContracts.swift; sourceTree = "<group>"; };
 		C032FB689174A5691978BF3C /* InputStrategyLabUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputStrategyLabUITests.swift; sourceTree = "<group>"; };
+		C173F2D34FADBC7C8F7BC8B7 /* TerminalInboxUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalInboxUITests.swift; sourceTree = "<group>"; };
 		C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSyncUITests.swift; sourceTree = "<group>"; };
 		C23026BB86D65831DC46C0F9 /* TerminalServerDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalServerDiscovery.swift; sourceTree = "<group>"; };
 		CAECD9944A3CB4779597B8A3 /* DebugSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugSettings.swift; sourceTree = "<group>"; };
@@ -337,6 +339,7 @@
 				A6673EB0D4EAD00E8605146E /* MultilineInputUITests.swift */,
 				9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */,
 				AB6598621689AE13A02FE2B9 /* TerminalHomeUITests.swift */,
+				C173F2D34FADBC7C8F7BC8B7 /* TerminalInboxUITests.swift */,
 				B04A72C0E65996D39B749EC4 /* TerminalReconnectUITests.swift */,
 			);
 			path = cmuxUITests;
@@ -779,6 +782,7 @@
 				2EAEA1238FB4E804F35A28F6 /* MultilineInputUITests.swift in Sources */,
 				35DD00750B94902B2CF0CDF6 /* ShortThreadLayoutUITests.swift in Sources */,
 				6D697DF3D11308026F0F628D /* TerminalHomeUITests.swift in Sources */,
+				0F468796CD8AECF1D58004E3 /* TerminalInboxUITests.swift in Sources */,
 				CEADBC899865019DA2333129 /* TerminalReconnectUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

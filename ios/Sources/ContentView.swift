@@ -15,6 +15,7 @@ struct ContentView: View {
     private let uiTestProviderId: String = {
         ProcessInfo.processInfo.environment["CMUX_UITEST_PROVIDER_ID"] ?? "claude"
     }()
+    private let uiTestTerminalInboxFixture = UITestConfig.terminalInboxFixtureEnabled
     private let uiTestTerminalDirectFixture = UITestConfig.terminalDirectFixtureEnabled
 
     var body: some View {
@@ -25,6 +26,12 @@ struct ContentView: View {
             } else if uiTestDirectChat {
                 #if DEBUG
                 InputBarUITestHarnessView()
+                #else
+                SignInView()
+                #endif
+            } else if uiTestTerminalInboxFixture {
+                #if DEBUG
+                TerminalSidebarRootView(store: .uiTestInboxFixture())
                 #else
                 SignInView()
                 #endif

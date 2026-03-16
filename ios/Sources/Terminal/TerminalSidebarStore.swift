@@ -1215,6 +1215,83 @@ extension TerminalSidebarStore {
             eagerlyRestoreSessions: false
         )
     }
+
+    static func uiTestInboxFixture() -> TerminalSidebarStore {
+        let macMiniID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+        let linuxVMID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        let currentWorkspaceID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        let olderWorkspaceID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+
+        let macMini = TerminalHost(
+            id: macMiniID,
+            stableID: "cmux-macmini",
+            name: "Mac mini",
+            hostname: "cmux-macmini",
+            username: "cmux",
+            symbolName: "desktopcomputer",
+            palette: .mint,
+            sortIndex: 0,
+            source: .discovered,
+            transportPreference: .remoteDaemon,
+            teamID: "team-uitest",
+            serverID: "cmux-macmini"
+        )
+        let linuxVM = TerminalHost(
+            id: linuxVMID,
+            stableID: "cmux-linux-vm",
+            name: "Linux VM",
+            hostname: "orb",
+            username: "cmux",
+            symbolName: "server.rack",
+            palette: .sky,
+            sortIndex: 1,
+            source: .discovered,
+            transportPreference: .remoteDaemon,
+            teamID: "team-uitest",
+            serverID: "cmux-linux-vm"
+        )
+
+        let currentWorkspace = TerminalWorkspace(
+            id: currentWorkspaceID,
+            hostID: macMini.id,
+            title: "Mac mini",
+            tmuxSessionName: "cmux-mac-mini",
+            preview: "Build failed",
+            lastActivity: Date(timeIntervalSince1970: 1_774_000_200),
+            unread: true,
+            phase: .connected
+        )
+        let olderWorkspace = TerminalWorkspace(
+            id: olderWorkspaceID,
+            hostID: linuxVM.id,
+            title: "Linux VM",
+            tmuxSessionName: "cmux-linux-vm",
+            preview: "cmux@orb:~$",
+            lastActivity: Date(timeIntervalSince1970: 1_774_000_000),
+            unread: false,
+            phase: .disconnected
+        )
+
+        let snapshot = TerminalStoreSnapshot(
+            hosts: [macMini, linuxVM],
+            workspaces: [olderWorkspace, currentWorkspace],
+            selectedWorkspaceID: currentWorkspace.id
+        )
+        let snapshotStore = InMemoryTerminalSnapshotStore(snapshot: snapshot)
+        let credentialsStore = InMemoryTerminalCredentialsStore(
+            passwords: [
+                macMini.id: "fixture",
+                linuxVM.id: "fixture",
+            ]
+        )
+        return TerminalSidebarStore(
+            snapshotStore: snapshotStore,
+            credentialsStore: credentialsStore,
+            serverDiscovery: nil,
+            networkPathMonitor: nil,
+            eagerlyRestoreSessions: false
+        )
+    }
 }
 
 private struct TerminalUITestDirectReconnectTransportFactory: TerminalTransportFactory {

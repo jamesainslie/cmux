@@ -434,6 +434,9 @@ private struct TerminalWorkspaceConversationRow: View {
                         .frame(width: 11, height: 11)
                         .overlay(Circle().stroke(Color.white, lineWidth: 2))
                         .offset(x: 2, y: 2)
+                        .accessibilityElement()
+                        .accessibilityLabel(TerminalHomeStrings.markUnreadAction)
+                        .accessibilityIdentifier("terminal.workspace.unread.\(workspace.id.uuidString)")
                 }
             }
 
@@ -448,6 +451,7 @@ private struct TerminalWorkspaceConversationRow: View {
                     Text(relativeTimestamp(for: workspace.lastActivity))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("terminal.workspace.timestamp.\(workspace.id.uuidString)")
                 }
 
                 HStack(spacing: 6) {
@@ -473,6 +477,7 @@ private struct TerminalWorkspaceConversationRow: View {
                         .font(.caption)
                         .foregroundStyle(statusColor(for: workspace.phase))
                         .lineLimit(1)
+                        .accessibilityIdentifier("terminal.workspace.status.\(workspace.id.uuidString)")
                 }
             }
         }
