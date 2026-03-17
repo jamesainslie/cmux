@@ -91,7 +91,8 @@ final class TerminalPanel: Panel, ObservableObject {
         portOrdinal: Int = 0,
         initialCommand: String? = nil,
         initialEnvironmentOverrides: [String: String] = [:],
-        additionalEnvironment: [String: String] = [:]
+        additionalEnvironment: [String: String] = [:],
+        tmuxBinding: TerminalSurface.TmuxPaneBinding? = nil
     ) {
         let surface = TerminalSurface(
             tabId: workspaceId,
@@ -100,7 +101,8 @@ final class TerminalPanel: Panel, ObservableObject {
             workingDirectory: workingDirectory,
             initialCommand: initialCommand,
             initialEnvironmentOverrides: initialEnvironmentOverrides,
-            additionalEnvironment: additionalEnvironment
+            additionalEnvironment: additionalEnvironment,
+            tmuxBinding: tmuxBinding
         )
         surface.portOrdinal = portOrdinal
         self.init(workspaceId: workspaceId, surface: surface)
@@ -169,6 +171,16 @@ final class TerminalPanel: Panel, ObservableObject {
             "hidden=\(hostedView.isHidden ? 1 : 0)"
         )
 #endif
+        // If tmux-backed, kill the tmux window and unregister from pane registry.
+        if let binding = surface.tmuxBinding {
+            if let appDelegate = NSApplication.shared.delegate as? AppDelegate,
+               let gateway = appDelegate.tmuxGateway {
+                gateway.paneRegistry.unregister(panelId: id)
+                Task {
+                    try? await gateway.killWindow(binding.windowId)
+                }
+            }
+        }
         surface.teardownSurface()
     }
 

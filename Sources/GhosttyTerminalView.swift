@@ -2597,6 +2597,22 @@ final class TerminalSurface: Identifiable, ObservableObject {
     private var searchNeedleCancellable: AnyCancellable?
     var currentKeyStateIndicatorText: String? { surfaceView.currentKeyStateIndicatorText }
 
+    // MARK: - tmux Integration
+
+    /// When non-nil, this surface is backed by a tmux pane and uses IO_MANUAL mode.
+    /// Keystrokes are written to the TTY path; output arrives via `deliverTmuxOutput(_:)`.
+    struct TmuxPaneBinding: Sendable {
+        let paneId: String
+        let windowId: String
+        var ttyPath: String?
+    }
+
+    /// The tmux pane this surface is bound to, or nil for standard exec-based surfaces.
+    private(set) var tmuxBinding: TmuxPaneBinding?
+
+    /// Whether this surface operates in tmux-backed manual IO mode.
+    var isTmuxBacked: Bool { tmuxBinding != nil }
+
     init(
         tabId: UUID,
         context: ghostty_surface_context_e,
@@ -2604,7 +2620,8 @@ final class TerminalSurface: Identifiable, ObservableObject {
         workingDirectory: String? = nil,
         initialCommand: String? = nil,
         initialEnvironmentOverrides: [String: String] = [:],
-        additionalEnvironment: [String: String] = [:]
+        additionalEnvironment: [String: String] = [:],
+        tmuxBinding: TmuxPaneBinding? = nil
     ) {
         self.id = UUID()
         self.tabId = tabId
@@ -2615,6 +2632,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         self.initialCommand = (trimmedCommand?.isEmpty == false) ? trimmedCommand : nil
         self.initialEnvironmentOverrides = Self.mergedNormalizedEnvironment(base: [:], overrides: initialEnvironmentOverrides)
         self.additionalEnvironment = Self.mergedNormalizedEnvironment(base: [:], overrides: additionalEnvironment)
+        self.tmuxBinding = tmuxBinding
         // Match Ghostty's own SurfaceView: ensure a non-zero initial frame so the backing layer
         // has non-zero bounds and the renderer can initialize without presenting a blank/stretched
         // intermediate frame on the first real resize.
@@ -3139,6 +3157,22 @@ final class TerminalSurface: Identifiable, ObservableObject {
             }
         }
 
+        // tmux IO_MANUAL mode: surface does not exec a shell.
+        // Keystrokes are routed via io_write_cb → direct TTY write.
+        // Output arrives via deliverTmuxOutput() → ghostty_surface_process_output().
+        if tmuxBinding != nil {
+            surfaceConfig.io_mode = GHOSTTY_SURFACE_IO_MANUAL
+            surfaceConfig.io_write_cb = { userdata, buf, len in
+                guard let userdata, let buf else { return }
+                let surface = Unmanaged<TerminalSurface>.fromOpaque(userdata).takeUnretainedValue()
+                let data = Data(bytes: buf, count: Int(len))
+                DispatchQueue.main.async {
+                    surface.handleIOWrite(data)
+                }
+            }
+            surfaceConfig.io_write_userdata = Unmanaged.passUnretained(self).toOpaque()
+        }
+
         let createSurface = { [self] in
             if !envVars.isEmpty {
                 let envVarsCount = envVars.count
@@ -3153,7 +3187,17 @@ final class TerminalSurface: Identifiable, ObservableObject {
         }
 
         let createWithCommandAndWorkingDirectory = { [self] in
-            if let initialCommand, !initialCommand.isEmpty {
+            // In tmux mode, don't set command (no shell exec — tmux owns the PTY).
+            if tmuxBinding != nil {
+                if let workingDirectory, !workingDirectory.isEmpty {
+                    workingDirectory.withCString { cWorkingDir in
+                        surfaceConfig.working_directory = cWorkingDir
+                        createSurface()
+                    }
+                } else {
+                    createSurface()
+                }
+            } else if let initialCommand, !initialCommand.isEmpty {
                 initialCommand.withCString { cCommand in
                     surfaceConfig.command = cCommand
                     if let workingDirectory, !workingDirectory.isEmpty {
@@ -3317,6 +3361,23 @@ final class TerminalSurface: Identifiable, ObservableObject {
             ghostty_surface_set_size(surface, wpx, hpx)
             lastPixelWidth = wpx
             lastPixelHeight = hpx
+
+            // Notify tmux gateway of the new terminal dimensions so it can
+            // send resize-pane. This is async and does not block typing.
+            if let binding = tmuxBinding, sizeChanged {
+                let termSize = ghostty_surface_size(surface)
+                if termSize.columns > 0, termSize.rows > 0 {
+                    NotificationCenter.default.post(
+                        name: .tmuxPaneResized,
+                        object: self,
+                        userInfo: [
+                            "paneId": binding.paneId,
+                            "columns": termSize.columns,
+                            "rows": termSize.rows
+                        ]
+                    )
+                }
+            }
         }
 
         // Let Ghostty continue rendering on its own wakeups for steady-state frames.
@@ -3408,6 +3469,66 @@ final class TerminalSurface: Identifiable, ObservableObject {
             return
         }
         writeTextData(data, to: surface)
+    }
+
+    // MARK: - tmux IO
+
+    /// Deliver output from a tmux pane to this surface's terminal emulator.
+    /// Called by TmuxGateway when `%output` data arrives for the bound pane.
+    func deliverTmuxOutput(_ data: Data) {
+        guard let surface else { return }
+        data.withUnsafeBytes { buffer in
+            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
+            ghostty_surface_process_output(surface, ptr, UInt(buffer.count))
+        }
+    }
+
+    /// Handle keystrokes from the Ghostty surface's io_write_cb in IO_MANUAL mode.
+    /// Routes keystrokes directly to the tmux pane's TTY for minimal latency.
+    func handleIOWrite(_ data: Data) {
+        guard let binding = tmuxBinding, let ttyPath = binding.ttyPath else {
+            // Fallback: if no TTY path, use tmux send-keys (higher latency)
+            if let binding = tmuxBinding, let text = String(data: data, encoding: .utf8) {
+                // Access gateway via notification — avoid retaining TmuxGateway directly
+                NotificationCenter.default.post(
+                    name: .tmuxSendKeys,
+                    object: self,
+                    userInfo: ["paneId": binding.paneId, "text": text]
+                )
+            }
+            return
+        }
+
+        // Direct TTY write — bypasses tmux command parser for lowest latency.
+        DispatchQueue.global(qos: .userInteractive).async {
+            let fd = open(ttyPath, O_WRONLY | O_NONBLOCK)
+            guard fd >= 0 else { return }
+            defer { close(fd) }
+
+            data.withUnsafeBytes { buffer in
+                guard let ptr = buffer.baseAddress else { return }
+                var written = 0
+                let total = buffer.count
+                while written < total {
+                    let n = write(fd, ptr.advanced(by: written), total - written)
+                    if n <= 0 { break }
+                    written += n
+                }
+            }
+        }
+    }
+
+    /// Update the tmux binding's TTY path (e.g., after querying tmux for pane details).
+    func updateTmuxTTYPath(_ ttyPath: String) {
+        tmuxBinding?.ttyPath = ttyPath
+    }
+
+    /// Get the current terminal size in columns and rows (for tmux resize-pane).
+    func terminalSize() -> (columns: UInt16, rows: UInt16)? {
+        guard let surface else { return nil }
+        let size = ghostty_surface_size(surface)
+        guard size.columns > 0, size.rows > 0 else { return nil }
+        return (columns: size.columns, rows: size.rows)
     }
 
     func requestBackgroundSurfaceStartIfNeeded() {
@@ -5912,6 +6033,10 @@ extension Notification.Name {
     static let ghosttyConfigDidReload = Notification.Name("ghosttyConfigDidReload")
     static let ghosttyDefaultBackgroundDidChange = Notification.Name("ghosttyDefaultBackgroundDidChange")
     static let browserSearchFocus = Notification.Name("browserSearchFocus")
+
+    // tmux integration
+    static let tmuxSendKeys = Notification.Name("tmuxSendKeys")
+    static let tmuxPaneResized = Notification.Name("tmuxPaneResized")
 }
 
 // MARK: - Scroll View Wrapper (Ghostty-style scrollbar)

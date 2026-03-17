@@ -103,6 +103,10 @@
 		DA7A10CA710E000000000003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DA7A10CA710E000000000001 /* Localizable.xcstrings */; };
 		DA7A10CA710E000000000004 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DA7A10CA710E000000000002 /* InfoPlist.xcstrings */; };
 		A5001623 /* cmux.sdef in Resources */ = {isa = PBXBuildFile; fileRef = A5001622 /* cmux.sdef */; };
+		A5001701 /* TmuxProtocolParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001700 /* TmuxProtocolParser.swift */; };
+		A5001703 /* TmuxBinaryResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001702 /* TmuxBinaryResolver.swift */; };
+		A5001705 /* TmuxPaneRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001704 /* TmuxPaneRegistry.swift */; };
+		A5001707 /* TmuxGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001706 /* TmuxGateway.swift */; };
 			/* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -253,6 +257,10 @@
 					DA7A10CA710E000000000001 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		DA7A10CA710E000000000002 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		A5001622 /* cmux.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.sdef; path = cmux.sdef; sourceTree = "<group>"; };
+		A5001700 /* TmuxProtocolParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxProtocolParser.swift; sourceTree = "<group>"; };
+		A5001702 /* TmuxBinaryResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxBinaryResolver.swift; sourceTree = "<group>"; };
+		A5001704 /* TmuxPaneRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxPaneRegistry.swift; sourceTree = "<group>"; };
+		A5001706 /* TmuxGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxGateway.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -416,6 +424,10 @@
 				A5001241 /* WindowDecorationsController.swift */,
 				A5001222 /* WindowAccessor.swift */,
 				A5001611 /* SessionPersistence.swift */,
+				A5001700 /* TmuxProtocolParser.swift */,
+				A5001702 /* TmuxBinaryResolver.swift */,
+				A5001704 /* TmuxPaneRegistry.swift */,
+				A5001706 /* TmuxGateway.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -692,6 +704,10 @@
 				A5001240 /* WindowDecorationsController.swift in Sources */,
 				A500120C /* WindowAccessor.swift in Sources */,
 				A5001610 /* SessionPersistence.swift in Sources */,
+			A5001701 /* TmuxProtocolParser.swift in Sources */,
+			A5001703 /* TmuxBinaryResolver.swift in Sources */,
+			A5001705 /* TmuxPaneRegistry.swift in Sources */,
+			A5001707 /* TmuxGateway.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

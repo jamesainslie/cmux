@@ -2091,6 +2091,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var lastTypingActivityAt: TimeInterval = 0
     private var didHandleExplicitOpenIntentAtStartup = false
     private var isTerminatingApp = false
+    /// Shared tmux gateway for session persistence. Created on demand when enabled.
+    private(set) var tmuxGateway: TmuxGateway?
+    private var tmuxResizeObserver: NSObjectProtocol?
+    private var tmuxSendKeysObserver: NSObjectProtocol?
     private var didInstallLifecycleSnapshotObservers = false
     private var didDisableSuddenTermination = false
     private var commandPaletteVisibilityByWindowId: [UUID: Bool] = [:]
@@ -2371,12 +2375,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         isTerminatingApp = true
         _ = saveSessionSnapshot(includeScrollback: true, removeWhenEmpty: false)
+        // Detach from tmux (keeps server alive for session persistence)
+        detachTmuxGateway()
         return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         isTerminatingApp = true
         _ = saveSessionSnapshot(includeScrollback: true, removeWhenEmpty: false)
+        // Detach from tmux (keeps server alive for session persistence)
+        detachTmuxGateway()
         stopSessionAutosaveTimer()
         TerminalController.shared.stop()
         VSCodeServeWebController.shared.stop()
@@ -2406,6 +2414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         installLifecycleSnapshotObserversIfNeeded()
         prepareStartupSessionSnapshotIfNeeded()
         startSessionAutosaveTimerIfNeeded()
+        startTmuxGatewayIfEnabled()
 #if DEBUG
         setupJumpUnreadUITestIfNeeded()
         setupGotoSplitUITestIfNeeded()
@@ -2436,6 +2445,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         didPrepareStartupSessionSnapshot = true
         guard SessionRestorePolicy.shouldAttemptRestore() else { return }
         startupSessionSnapshot = SessionPersistenceStore.load()
+    }
+
+    // MARK: - tmux Session Persistence
+
+    private func startTmuxGatewayIfEnabled() {
+        guard SessionPersistenceMode.isTmuxEnabled else { return }
+
+        let gateway = TmuxGateway()
+        gateway.delegate = self
+        self.tmuxGateway = gateway
+
+        // Observe resize notifications from tmux-backed surfaces
+        tmuxResizeObserver = NotificationCenter.default.addObserver(
+            forName: .tmuxPaneResized,
+            object: nil,
+            queue: .main
+        ) { [weak gateway] notification in
+            guard let paneId = notification.userInfo?["paneId"] as? String,
+                  let columns = notification.userInfo?["columns"] as? UInt16,
+                  let rows = notification.userInfo?["rows"] as? UInt16 else { return }
+            gateway?.resizePane(paneId, columns: columns, rows: rows)
+        }
+
+        // Observe send-keys fallback from tmux-backed surfaces
+        tmuxSendKeysObserver = NotificationCenter.default.addObserver(
+            forName: .tmuxSendKeys,
+            object: nil,
+            queue: .main
+        ) { [weak gateway] notification in
+            guard let paneId = notification.userInfo?["paneId"] as? String,
+                  let text = notification.userInfo?["text"] as? String else { return }
+            gateway?.sendKeys(text, toPaneId: paneId)
+        }
+
+        Task {
+            do {
+                try await gateway.start()
+                NSLog("[AppDelegate] tmux gateway started")
+            } catch {
+                NSLog("[AppDelegate] tmux gateway failed to start: \(error)")
+                self.tmuxGateway = nil
+            }
+        }
+    }
+
+    private func detachTmuxGateway() {
+        if let observer = tmuxResizeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            tmuxResizeObserver = nil
+        }
+        if let observer = tmuxSendKeysObserver {
+            NotificationCenter.default.removeObserver(observer)
+            tmuxSendKeysObserver = nil
+        }
+
+        guard let gateway = tmuxGateway else { return }
+        // Save pane registry before detaching
+        gateway.paneRegistry.save()
+        // Detach gracefully — tmux server stays alive
+        gateway.detach()
+        NSLog("[AppDelegate] tmux gateway detached")
     }
 
     private func persistedWindowGeometry(
@@ -12169,4 +12239,43 @@ private extension NSWindow {
         return hitWebView === webView
     }
 
+}
+
+// MARK: - TmuxGateway.Delegate
+
+extension AppDelegate: TmuxGateway.Delegate {
+    func tmuxGateway(_ gateway: TmuxGateway, didReceiveOutput data: Data, forPaneId paneId: String) {
+        // Find the panel registered for this tmux pane and deliver output
+        guard let entry = gateway.paneRegistry.entry(forPaneId: paneId) else { return }
+        guard let tabManager else { return }
+
+        for tab in tabManager.tabs {
+            if let panel = tab.panels[entry.panelId] as? TerminalPanel {
+                panel.surface.deliverTmuxOutput(data)
+                return
+            }
+        }
+    }
+
+    func tmuxGateway(_ gateway: TmuxGateway, windowAdded windowId: String) {
+        // Window added externally (e.g., tmux command line) — could import as new panel
+        NSLog("[TmuxDelegate] Window added: \(windowId)")
+    }
+
+    func tmuxGateway(_ gateway: TmuxGateway, windowClosed windowId: String) {
+        // Window closed externally — clean up registry entry
+        if let entry = gateway.paneRegistry.entry(forWindowId: windowId) {
+            gateway.paneRegistry.unregister(panelId: entry.panelId)
+        }
+        NSLog("[TmuxDelegate] Window closed: \(windowId)")
+    }
+
+    func tmuxGatewayDidDisconnect(_ gateway: TmuxGateway, reason: String?) {
+        NSLog("[TmuxDelegate] Disconnected: \(reason ?? "clean")")
+    }
+
+    func tmuxGateway(_ gateway: TmuxGateway, paneModeChanged paneId: String) {
+        // Copy mode entered/exited — could update UI state
+        NSLog("[TmuxDelegate] Pane mode changed: \(paneId)")
+    }
 }

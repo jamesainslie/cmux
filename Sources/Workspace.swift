@@ -363,7 +363,9 @@ extension Workspace {
             )
             terminalSnapshot = SessionTerminalPanelSnapshot(
                 workingDirectory: panelDirectories[panelId],
-                scrollback: resolvedScrollback
+                scrollback: terminalPanel.surface.isTmuxBacked ? nil : resolvedScrollback,
+                tmuxPaneId: terminalPanel.surface.tmuxBinding?.paneId,
+                tmuxWindowId: terminalPanel.surface.tmuxBinding?.windowId
             )
             browserSnapshot = nil
             markdownSnapshot = nil
@@ -535,6 +537,42 @@ extension Workspace {
         switch snapshot.type {
         case .terminal:
             let workingDirectory = snapshot.terminal?.workingDirectory ?? snapshot.directory ?? currentDirectory
+
+            // tmux reattach: if the snapshot has a tmux pane ID and tmux persistence is enabled,
+            // try to reattach to the live tmux pane instead of replaying scrollback.
+            if SessionPersistenceMode.isTmuxEnabled,
+               let tmuxPaneId = snapshot.terminal?.tmuxPaneId,
+               let tmuxWindowId = snapshot.terminal?.tmuxWindowId,
+               let appDelegate = NSApplication.shared.delegate as? AppDelegate,
+               let gateway = appDelegate.tmuxGateway,
+               gateway.state == .connected {
+
+                let tmuxBinding = TerminalSurface.TmuxPaneBinding(
+                    paneId: tmuxPaneId,
+                    windowId: tmuxWindowId,
+                    ttyPath: gateway.paneRegistry.entry(forPanelId: snapshot.id)?.ttyPath
+                )
+                guard let terminalPanel = newTerminalSurface(
+                    inPane: paneId,
+                    focus: false,
+                    workingDirectory: workingDirectory,
+                    tmuxBinding: tmuxBinding
+                ) else {
+                    return nil
+                }
+                // Register in pane registry
+                gateway.paneRegistry.register(
+                    panelId: terminalPanel.id,
+                    windowId: tmuxWindowId,
+                    paneId: tmuxPaneId,
+                    ttyPath: tmuxBinding.ttyPath,
+                    workingDirectory: workingDirectory
+                )
+                applySessionPanelMetadata(snapshot, toPanelId: terminalPanel.id)
+                return terminalPanel.id
+            }
+
+            // Standard path: fresh shell with scrollback replay
             let replayEnvironment = SessionScrollbackReplayStore.replayEnvironment(
                 for: snapshot.terminal?.scrollback
             )
@@ -6534,14 +6572,15 @@ final class Workspace: Identifiable, ObservableObject {
         inPane paneId: PaneID,
         focus: Bool? = nil,
         workingDirectory: String? = nil,
-        startupEnvironment: [String: String] = [:]
+        startupEnvironment: [String: String] = [:],
+        tmuxBinding: TerminalSurface.TmuxPaneBinding? = nil
     ) -> TerminalPanel? {
         let shouldFocusNewTab = focus ?? (bonsplitController.focusedPaneId == paneId)
         let previousFocusedPanelId = focusedPanelId
         let previousHostedView = focusedTerminalPanel?.hostedView
 
         let inheritedConfig = inheritedTerminalConfig(inPane: paneId)
-        let remoteTerminalStartupCommand = remoteTerminalStartupCommand()
+        let remoteTerminalStartupCommand = tmuxBinding != nil ? nil : remoteTerminalStartupCommand()
 
         // Create new terminal panel
         let newPanel = TerminalPanel(
@@ -6551,7 +6590,8 @@ final class Workspace: Identifiable, ObservableObject {
             workingDirectory: workingDirectory,
             portOrdinal: portOrdinal,
             initialCommand: remoteTerminalStartupCommand,
-            additionalEnvironment: startupEnvironment
+            additionalEnvironment: startupEnvironment,
+            tmuxBinding: tmuxBinding
         )
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle

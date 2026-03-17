@@ -56161,6 +56161,108 @@
         }
       }
     },
+    "settings.section.sessionPersistence": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Session Persistence"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "セッション永続化"
+          }
+        }
+      }
+    },
+    "settings.persistence.mode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persistence Mode"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "永続化モード"
+          }
+        }
+      }
+    },
+    "settings.persistence.mode.subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How terminal sessions are preserved across app restarts."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリの再起動時にターミナルセッションを保持する方法。"
+          }
+        }
+      }
+    },
+    "settings.persistence.mode.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None (default)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "なし（デフォルト）"
+          }
+        }
+      }
+    },
+    "settings.persistence.mode.tmux": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmux (persistent sessions)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmux（セッション永続化）"
+          }
+        }
+      }
+    },
+    "settings.persistence.mode.note": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When set to tmux, terminal sessions survive app restarts. Running processes and terminal state are preserved via a background tmux server. Requires tmux >= 3.2."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmuxに設定すると、ターミナルセッションはアプリの再起動後も維持されます。実行中のプロセスとターミナルの状態はバックグラウンドのtmuxサーバーを通じて保持されます。tmux 3.2以降が必要です。"
+          }
+        }
+      }
+    },
     "settings.section.browser": {
       "extractionState": "manual",
       "localizations": {

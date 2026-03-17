@@ -224,6 +224,10 @@ struct SessionGitBranchSnapshot: Codable, Sendable {
 struct SessionTerminalPanelSnapshot: Codable, Sendable {
     var workingDirectory: String?
     var scrollback: String?
+    /// tmux pane ID if this terminal was backed by a tmux pane (e.g., "%0").
+    var tmuxPaneId: String?
+    /// tmux window ID if this terminal was backed by a tmux pane (e.g., "@0").
+    var tmuxWindowId: String?
 }
 
 struct SessionBrowserPanelSnapshot: Codable, Sendable {

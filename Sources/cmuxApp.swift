@@ -3097,6 +3097,7 @@ struct SettingsView: View {
     private var sendAnonymousTelemetry = TelemetrySettings.defaultSendAnonymousTelemetry
     @AppStorage("cmuxPortBase") private var cmuxPortBase = 9100
     @AppStorage("cmuxPortRange") private var cmuxPortRange = 10
+    @AppStorage(SessionPersistenceMode.defaultsKey) private var sessionPersistenceMode = SessionPersistenceMode.none.rawValue
     @AppStorage(BrowserSearchSettings.searchEngineKey) private var browserSearchEngine = BrowserSearchSettings.defaultSearchEngine.rawValue
     @AppStorage(BrowserSearchSettings.searchSuggestionsEnabledKey) private var browserSearchSuggestionsEnabled = BrowserSearchSettings.defaultSearchSuggestionsEnabled
     @AppStorage(BrowserThemeSettings.modeKey) private var browserThemeMode = BrowserThemeSettings.defaultMode.rawValue
@@ -4193,6 +4194,25 @@ struct SettingsView: View {
                         SettingsCardDivider()
 
                         SettingsCardNote(String(localized: "settings.automation.port.note", defaultValue: "Each workspace gets CMUX_PORT and CMUX_PORT_END env vars with a dedicated port range. New terminals inherit these values."))
+                    }
+
+                    SettingsSectionHeader(title: String(localized: "settings.section.sessionPersistence", defaultValue: "Session Persistence"))
+                    SettingsCard {
+                        SettingsPickerRow(
+                            String(localized: "settings.persistence.mode", defaultValue: "Persistence Mode"),
+                            subtitle: String(localized: "settings.persistence.mode.subtitle", defaultValue: "How terminal sessions are preserved across app restarts."),
+                            controlWidth: pickerColumnWidth,
+                            selection: $sessionPersistenceMode,
+                            accessibilityId: "SessionPersistenceModePicker"
+                        ) {
+                            ForEach(SessionPersistenceMode.allCases, id: \.rawValue) { mode in
+                                Text(mode.displayName).tag(mode.rawValue)
+                            }
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardNote(String(localized: "settings.persistence.mode.note", defaultValue: "When set to tmux, terminal sessions survive app restarts. Running processes and terminal state are preserved via a background tmux server. Requires tmux >= 3.2."))
                     }
 
                     SettingsSectionHeader(title: String(localized: "settings.section.browser", defaultValue: "Browser"))
