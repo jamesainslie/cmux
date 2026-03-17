@@ -3,6 +3,8 @@ import Sentry
 
 struct ContentView: View {
     @StateObject private var authManager = AuthManager.shared
+    @StateObject private var terminalStore = TerminalSidebarRootView.makeLiveStore()
+    @StateObject private var notificationRouteStore = NotificationRouteStore.shared
     private let uiTestDirectChat: Bool = {
         ProcessInfo.processInfo.environment["CMUX_UITEST_DIRECT_CHAT"] == "1"
     }()
@@ -58,7 +60,10 @@ struct ContentView: View {
             } else if authManager.isRestoringSession {
                 SessionRestoreView()
             } else if authManager.isAuthenticated {
-                TerminalSidebarRootView()
+                ConversationListView(
+                    terminalStore: terminalStore,
+                    routeStore: notificationRouteStore
+                )
             } else {
                 SignInView()
             }

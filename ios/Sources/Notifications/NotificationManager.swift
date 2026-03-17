@@ -4,17 +4,136 @@ import UserNotifications
 import ConvexMobile
 
 @MainActor
+protocol NotificationPushSyncing {
+    var isAuthenticated: Bool { get }
+    func sendTestPush(title: String, body: String) async throws
+    func upsertPushToken(
+        token: String,
+        environment: PushTokensUpsertArgsEnvironmentEnum,
+        platform: String,
+        bundleId: String,
+        deviceId: String?
+    ) async throws
+    func removePushToken(token: String) async throws
+}
+
+@MainActor
+struct LiveNotificationPushSyncer: NotificationPushSyncing {
+    private let convex = ConvexClientManager.shared
+
+    var isAuthenticated: Bool {
+        convex.isAuthenticated
+    }
+
+    func sendTestPush(title: String, body: String) async throws {
+        let args = PushTokensSendTestArgs(title: title, body: body)
+        let _: PushTokensSendTestReturn = try await convex.client.mutation(
+            "pushTokens:sendTest",
+            with: args.asDictionary()
+        )
+    }
+
+    func upsertPushToken(
+        token: String,
+        environment: PushTokensUpsertArgsEnvironmentEnum,
+        platform: String,
+        bundleId: String,
+        deviceId: String?
+    ) async throws {
+        let args = PushTokensUpsertArgs(
+            deviceId: deviceId,
+            token: token,
+            environment: environment,
+            platform: platform,
+            bundleId: bundleId
+        )
+        let _: PushTokensUpsertReturn = try await convex.client.mutation(
+            "pushTokens:upsert",
+            with: args.asDictionary()
+        )
+    }
+
+    func removePushToken(token: String) async throws {
+        let args = PushTokensRemoveArgs(token: token)
+        let _: PushTokensRemoveReturn = try await convex.client.mutation(
+            "pushTokens:remove",
+            with: args.asDictionary()
+        )
+    }
+}
+
+@MainActor
+protocol NotificationSystemHandling {
+    func authorizationStatus() async -> UNAuthorizationStatus
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
+    var isRegisteredForRemoteNotifications: Bool { get }
+    func registerForRemoteNotifications()
+    func openSettings()
+}
+
+@MainActor
+struct LiveNotificationSystem: NotificationSystemHandling {
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
+        try await UNUserNotificationCenter.current().requestAuthorization(options: options)
+    }
+
+    var isRegisteredForRemoteNotifications: Bool {
+        UIApplication.shared.isRegisteredForRemoteNotifications
+    }
+
+    func registerForRemoteNotifications() {
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+
+    func openSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else {
+            return
+        }
+        UIApplication.shared.open(url)
+    }
+}
+
+@MainActor
+protocol NotificationDeviceInfoProviding {
+    var bundleIdentifier: String? { get }
+    var vendorIdentifier: String? { get }
+}
+
+@MainActor
+struct LiveNotificationDeviceInfo: NotificationDeviceInfoProviding {
+    var bundleIdentifier: String? {
+        Bundle.main.bundleIdentifier
+    }
+
+    var vendorIdentifier: String? {
+        UIDevice.current.identifierForVendor?.uuidString
+    }
+}
+
+@MainActor
 final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var isRegisteredForRemoteNotifications = false
 
-    private let convex = ConvexClientManager.shared
-    private let tokenStore = NotificationTokenStore.shared
+    private let pushSyncer: NotificationPushSyncing
+    private let tokenStore: NotificationTokenStoring
+    private let routeStore: NotificationRouteStore
+    private let system: NotificationSystemHandling
+    private let deviceInfo: NotificationDeviceInfoProviding
     private var isRequestInFlight = false
 
     private override init() {
+        self.pushSyncer = LiveNotificationPushSyncer()
+        self.tokenStore = NotificationTokenStore.shared
+        self.routeStore = .shared
+        self.system = LiveNotificationSystem()
+        self.deviceInfo = LiveNotificationDeviceInfo()
         super.init()
         NotificationCenter.default.addObserver(
             self,
@@ -22,6 +141,30 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
+    }
+
+    init(
+        pushSyncer: NotificationPushSyncing,
+        tokenStore: NotificationTokenStoring,
+        routeStore: NotificationRouteStore,
+        system: NotificationSystemHandling,
+        deviceInfo: NotificationDeviceInfoProviding,
+        observeDidBecomeActive: Bool
+    ) {
+        self.pushSyncer = pushSyncer
+        self.tokenStore = tokenStore
+        self.routeStore = routeStore
+        self.system = system
+        self.deviceInfo = deviceInfo
+        super.init()
+        if observeDidBecomeActive {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleDidBecomeActive),
+                name: UIApplication.didBecomeActiveNotification,
+                object: nil
+            )
+        }
     }
 
     var statusLabel: String {
@@ -59,9 +202,8 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func refreshAuthorizationStatus() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        authorizationStatus = settings.authorizationStatus
-        isRegisteredForRemoteNotifications = UIApplication.shared.isRegisteredForRemoteNotifications
+        authorizationStatus = await system.authorizationStatus()
+        isRegisteredForRemoteNotifications = system.isRegisteredForRemoteNotifications
 
         if isAuthorized {
             registerForRemoteNotifications()
@@ -88,8 +230,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         defer { isRequestInFlight = false }
 
         do {
-            let granted = try await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])
+            let granted = try await system.requestAuthorization(options: [.alert, .sound, .badge])
             await refreshAuthorizationStatus()
             if granted {
                 registerForRemoteNotifications()
@@ -100,10 +241,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else {
-            return
-        }
-        UIApplication.shared.open(url)
+        system.openSettings()
     }
 
     func sendTestNotification() async throws {
@@ -120,17 +258,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             throw NotificationTestError.deviceTokenMissing
         }
 
-        guard convex.isAuthenticated else {
+        guard pushSyncer.isAuthenticated else {
             throw NotificationTestError.notAuthenticated
         }
 
-        let args = PushTokensSendTestArgs(
+        try await pushSyncer.sendTestPush(
             title: "cmux test",
             body: "Push notification from cmux"
-        )
-        let _: PushTokensSendTestReturn = try await convex.client.mutation(
-            "pushTokens:sendTest",
-            with: args.asDictionary()
         )
     }
 
@@ -146,6 +280,14 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         print("🔔 Failed to register for remote notifications: \(error)")
     }
 
+    func handleNotificationUserInfo(_ userInfo: [AnyHashable: Any]) {
+        routeStore.store(userInfo: userInfo)
+    }
+
+    var pendingRouteForTesting: NotificationRoute? {
+        routeStore.pendingRoute
+    }
+
     func syncTokenIfPossible() async {
         await refreshAuthorizationStatus()
         guard isAuthorized else {
@@ -153,7 +295,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             return
         }
 
-        guard convex.isAuthenticated else {
+        guard pushSyncer.isAuthenticated else {
             return
         }
 
@@ -161,7 +303,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             return
         }
 
-        guard let bundleId = Bundle.main.bundleIdentifier else {
+        guard let bundleId = deviceInfo.bundleIdentifier else {
             print("🔔 Missing bundle identifier, cannot register push token.")
             return
         }
@@ -169,19 +311,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         let environment: PushTokensUpsertArgsEnvironmentEnum = Environment.current == .development
             ? .development
             : .production
-        let deviceId = UIDevice.current.identifierForVendor?.uuidString
+        let deviceId = deviceInfo.vendorIdentifier
 
         do {
-            let args = PushTokensUpsertArgs(
-                deviceId: deviceId,
+            try await pushSyncer.upsertPushToken(
                 token: token,
                 environment: environment,
                 platform: "ios",
-                bundleId: bundleId
-            )
-            let _: PushTokensUpsertReturn = try await convex.client.mutation(
-                "pushTokens:upsert",
-                with: args.asDictionary()
+                bundleId: bundleId,
+                deviceId: deviceId
             )
         } catch {
             print("🔔 Failed to sync push token: \(error)")
@@ -193,17 +331,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             return
         }
 
-        guard convex.isAuthenticated else {
+        guard pushSyncer.isAuthenticated else {
             tokenStore.clear()
             return
         }
 
         do {
-            let args = PushTokensRemoveArgs(token: token)
-            let _: PushTokensRemoveReturn = try await convex.client.mutation(
-                "pushTokens:remove",
-                with: args.asDictionary()
-            )
+            try await pushSyncer.removePushToken(token: token)
             tokenStore.clear()
         } catch {
             print("🔔 Failed to remove push token: \(error)")
@@ -218,11 +352,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     private func registerForRemoteNotifications() {
-        if UIApplication.shared.isRegisteredForRemoteNotifications {
+        if system.isRegisteredForRemoteNotifications {
             isRegisteredForRemoteNotifications = true
             return
         }
-        UIApplication.shared.registerForRemoteNotifications()
+        system.registerForRemoteNotifications()
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -232,6 +366,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         return [.banner, .list, .sound, .badge]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        await MainActor.run {
+            handleNotificationUserInfo(response.notification.request.content.userInfo)
+        }
     }
 }
 

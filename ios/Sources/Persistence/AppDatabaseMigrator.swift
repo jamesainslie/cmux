@@ -50,6 +50,59 @@ enum AppDatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v2_create_inbox_cache") { db in
+            try db.alter(table: "workspaces") { table in
+                table.add(column: "machine_id", .text)
+            }
+
+            try db.create(table: "inbox_items") { table in
+                table.column("item_id", .text).notNull().primaryKey()
+                table.column("kind", .text).notNull()
+                table.column("conversation_id", .text)
+                table.column("workspace_id", .text)
+                table.column("machine_id", .text)
+                table.column("title", .text).notNull()
+                table.column("preview", .text).notNull().defaults(to: "")
+                table.column("accessory_label", .text)
+                table.column("symbol_name", .text)
+                table.column("unread_count", .integer).notNull().defaults(to: 0)
+                table.column("sort_timestamp", .double).notNull()
+            }
+
+            try db.create(index: "inbox_items_by_sort", on: "inbox_items", columns: ["sort_timestamp"])
+
+            try db.create(table: "workspace_user_state") { table in
+                table.column("workspace_id", .text).notNull().primaryKey()
+                table.column("last_read_event_seq", .integer).notNull().defaults(to: 0)
+                table.column("updated_at", .double).notNull()
+            }
+
+            try db.create(table: "machine_presence") { table in
+                table.column("machine_id", .text).notNull().primaryKey()
+                table.column("display_name", .text).notNull()
+                table.column("tailscale_hostname", .text)
+                table.column("tailscale_ips_json", .text).notNull().defaults(to: "[]")
+                table.column("status", .text).notNull()
+                table.column("last_seen_at", .double).notNull()
+                table.column("last_workspace_sync_at", .double)
+            }
+        }
+
+        migrator.registerMigration("v3_expand_mobile_inbox_cache") { db in
+            try db.alter(table: "workspaces") { table in
+                table.add(column: "remote_workspace_id", .text)
+            }
+
+            try db.alter(table: "inbox_items") { table in
+                table.add(column: "team_id", .text)
+                table.add(column: "tmux_session_name", .text)
+                table.add(column: "latest_event_seq", .integer)
+                table.add(column: "last_read_event_seq", .integer)
+                table.add(column: "tailscale_hostname", .text)
+                table.add(column: "tailscale_ips_json", .text).notNull().defaults(to: "[]")
+            }
+        }
+
         return migrator
     }
 

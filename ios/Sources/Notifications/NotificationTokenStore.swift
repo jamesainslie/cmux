@@ -1,6 +1,12 @@
 import Foundation
 
-final class NotificationTokenStore {
+protocol NotificationTokenStoring: AnyObject {
+    func load() -> String?
+    func save(_ token: String)
+    func clear()
+}
+
+final class NotificationTokenStore: NotificationTokenStoring {
     static let shared = NotificationTokenStore()
 
     private let tokenKey = "notifications.deviceToken"

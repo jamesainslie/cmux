@@ -63,11 +63,18 @@ struct CMuxApp: App {
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    private static let remoteNotificationLaunchOptionsKey = UIApplication.LaunchOptionsKey(
+        rawValue: "UIApplicationLaunchOptionsRemoteNotificationKey"
+    )
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = NotificationManager.shared
+        if let userInfo = launchOptions?[Self.remoteNotificationLaunchOptionsKey] as? [AnyHashable: Any] {
+            NotificationManager.shared.handleNotificationUserInfo(userInfo)
+        }
         Task {
             await NotificationManager.shared.refreshAuthorizationStatus()
         }

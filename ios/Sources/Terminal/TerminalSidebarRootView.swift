@@ -9,10 +9,15 @@ struct TerminalSidebarRootView: View {
 
     init(store: TerminalSidebarStore? = nil) {
         _store = StateObject(
-            wrappedValue: store ?? TerminalSidebarStore(
-                snapshotStore: Self.makeDefaultSnapshotStore(),
-                serverDiscovery: TerminalServerDiscovery()
-            )
+            wrappedValue: store ?? Self.makeLiveStore()
+        )
+    }
+
+    @MainActor
+    static func makeLiveStore() -> TerminalSidebarStore {
+        TerminalSidebarStore(
+            snapshotStore: Self.makeDefaultSnapshotStore(),
+            serverDiscovery: TerminalServerDiscovery()
         )
     }
 
@@ -118,17 +123,21 @@ struct TerminalSidebarRootView: View {
                     } else {
                         ForEach(filteredWorkspaces) { workspace in
                             if let host = store.server(for: workspace.hostID) {
+                                let row = TerminalWorkspaceConversationRow(
+                                    workspace: workspace,
+                                    host: host
+                                )
                                 Button {
                                     let workspaceID = store.openWorkspace(workspace)
                                     navigationPath.append(workspaceID)
                                 } label: {
-                                    TerminalWorkspaceConversationRow(
-                                        workspace: workspace,
-                                        host: host
-                                    )
+                                    row
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityElement(children: .ignore)
                                 .accessibilityIdentifier("terminal.workspace.\(workspace.id.uuidString)")
+                                .accessibilityLabel(row.accessibilityTitle)
+                                .accessibilityValue(row.accessibilitySummary)
                                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                     Button {
                                         store.toggleUnread(for: workspace.id)
@@ -438,6 +447,24 @@ private struct TerminalWorkspaceConversationRow: View {
     let workspace: TerminalWorkspace
     let host: TerminalHost
 
+    var accessibilityTitle: String {
+        workspace.title
+    }
+
+    var accessibilitySummary: String {
+        let readState = workspace.unread
+            ? TerminalHomeStrings.markUnreadAction
+            : TerminalHomeStrings.markReadAction
+        return [
+            host.name,
+            previewText(for: workspace, host: host),
+            statusText(for: workspace.phase),
+            readState,
+            relativeTimestamp(for: workspace.lastActivity),
+        ]
+        .joined(separator: ", ")
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
@@ -582,7 +609,29 @@ private struct TerminalWorkspaceConversationRow: View {
     }
 }
 
-private struct TerminalWorkspaceScreen: View {
+struct TerminalWorkspaceDestinationView: View {
+    @ObservedObject var store: TerminalSidebarStore
+    let workspaceID: TerminalWorkspace.ID
+
+    var body: some View {
+        if let workspace = store.workspace(with: workspaceID),
+           let host = store.server(for: workspace.hostID) {
+            TerminalWorkspaceScreen(
+                workspace: workspace,
+                host: host,
+                controller: store.controller(for: workspace)
+            )
+        } else {
+            ContentUnavailableView(
+                TerminalHomeStrings.missingTitle,
+                systemImage: "terminal",
+                description: Text(TerminalHomeStrings.missingDescription)
+            )
+        }
+    }
+}
+
+struct TerminalWorkspaceScreen: View {
     let workspace: TerminalWorkspace
     let host: TerminalHost
     @ObservedObject var controller: TerminalSessionController

@@ -269,6 +269,7 @@ struct TerminalWorkspace: Identifiable, Codable, Equatable, Sendable {
     var unread: Bool
     var phase: TerminalConnectionPhase
     var lastError: String?
+    var remoteWorkspaceID: String?
     var backendIdentity: TerminalWorkspaceBackendIdentity?
     var backendMetadata: TerminalWorkspaceBackendMetadata?
     var remoteDaemonResumeState: TerminalRemoteDaemonResumeState?
@@ -283,6 +284,7 @@ struct TerminalWorkspace: Identifiable, Codable, Equatable, Sendable {
         unread: Bool = false,
         phase: TerminalConnectionPhase = .idle,
         lastError: String? = nil,
+        remoteWorkspaceID: String? = nil,
         backendIdentity: TerminalWorkspaceBackendIdentity? = nil,
         backendMetadata: TerminalWorkspaceBackendMetadata? = nil,
         remoteDaemonResumeState: TerminalRemoteDaemonResumeState? = nil
@@ -296,9 +298,14 @@ struct TerminalWorkspace: Identifiable, Codable, Equatable, Sendable {
         self.unread = unread
         self.phase = phase
         self.lastError = lastError
+        self.remoteWorkspaceID = remoteWorkspaceID
         self.backendIdentity = backendIdentity
         self.backendMetadata = backendMetadata
         self.remoteDaemonResumeState = remoteDaemonResumeState
+    }
+
+    var isRemoteWorkspace: Bool {
+        !(remoteWorkspaceID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     }
 }
 

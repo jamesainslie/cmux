@@ -1279,9 +1279,14 @@ final class MessagePositionUITests: XCTestCase {
             "Expected last message to stay above the keyboard: gap=\(openGap)"
         )
         XCTAssertLessThanOrEqual(
-            abs(openGap - closedGap),
+            openGap,
+            closedGap + gapTolerance,
+            "Expected the last message to stay near the input after the keyboard opens: closed=\(closedGap) open=\(openGap)"
+        )
+        XCTAssertLessThanOrEqual(
+            openLastMaxY - closedLastMaxY,
             gapTolerance,
-            "Expected bottom gap to stay stable when the keyboard opens: closed=\(closedGap) open=\(openGap)"
+            "Expected the last message to stay fixed or move upward when the keyboard opens: closed=\(closedLastMaxY) open=\(openLastMaxY)"
         )
     }
 

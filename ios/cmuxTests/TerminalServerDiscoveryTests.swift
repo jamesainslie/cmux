@@ -60,6 +60,25 @@ final class TerminalServerDiscoveryTests: XCTestCase {
         XCTAssertEqual(updates.last, [])
     }
 
+    func testDiscoveryFallsBackToLegacyServerMetadataWhenMachineRowsMissing() async throws {
+        let memberships = [
+            makeMembership(
+                teamID: "team-1",
+                serverMetadata: #"{"cmux":{"servers":[{"id":"cmux-macmini","name":"Mac mini","hostname":"cmux-macmini","username":"cmux","symbolName":"desktopcomputer","palette":"mint","transport":"cmuxd-remote"}]}}"#
+            )
+        ]
+        let discovery = TerminalServerDiscovery(
+            machineHosts: Just([]).eraseToAnyPublisher(),
+            teamMemberships: Just(memberships).eraseToAnyPublisher()
+        )
+
+        let hosts = await firstValue(from: discovery.hostsPublisher)
+
+        XCTAssertEqual(hosts.map(\.stableID), ["cmux-macmini"])
+        XCTAssertEqual(hosts.first?.hostname, "cmux-macmini")
+        XCTAssertEqual(hosts.first?.transportPreference, .remoteDaemon)
+    }
+
     private func makeMembership(teamID: String, serverMetadata: String?) -> TeamsListTeamMembershipsItem {
         TeamsListTeamMembershipsItem(
             team: TeamsListTeamMembershipsItemTeam(

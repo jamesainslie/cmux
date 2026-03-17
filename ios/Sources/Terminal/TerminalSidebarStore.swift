@@ -120,6 +120,30 @@ typealias TerminalSessionControllerFactory = @MainActor (
 ) -> TerminalSessionController
 
 @MainActor
+protocol TerminalRemoteWorkspaceReadMarking {
+    func markRead(item: UnifiedInboxItem) async throws
+}
+
+@MainActor
+struct ConvexTerminalRemoteWorkspaceReadMarker: TerminalRemoteWorkspaceReadMarking {
+    func markRead(item: UnifiedInboxItem) async throws {
+        guard let teamID = item.teamID,
+              let workspaceID = item.workspaceID else {
+            return
+        }
+
+        let _: String = try await ConvexClientManager.shared.client.mutation(
+            "mobileWorkspaces:markRead",
+            with: [
+                "teamSlugOrId": teamID,
+                "workspaceId": workspaceID,
+                "latestEventSeq": item.latestEventSeq,
+            ]
+        )
+    }
+}
+
+@MainActor
 final class TerminalSidebarStore: ObservableObject {
     @Published private(set) var hosts: [TerminalHost]
     @Published private(set) var workspaces: [TerminalWorkspace]
@@ -132,6 +156,7 @@ final class TerminalSidebarStore: ObservableObject {
     private let workspaceMetadataService: TerminalWorkspaceMetadataStreaming?
     private let serverDiscovery: TerminalServerDiscovering?
     private let networkPathMonitor: TerminalNetworkPathMonitoring?
+    private let remoteWorkspaceReadMarker: TerminalRemoteWorkspaceReadMarking?
     private let eagerlyRestoreSessions: Bool
     private let controllerFactory: TerminalSessionControllerFactory
 
@@ -150,6 +175,7 @@ final class TerminalSidebarStore: ObservableObject {
         workspaceMetadataService: TerminalWorkspaceMetadataStreaming? = nil,
         serverDiscovery: TerminalServerDiscovering? = nil,
         networkPathMonitor: TerminalNetworkPathMonitoring? = TerminalNetworkPathMonitor(),
+        remoteWorkspaceReadMarker: TerminalRemoteWorkspaceReadMarking? = nil,
         eagerlyRestoreSessions: Bool = true,
         controllerFactory: TerminalSessionControllerFactory? = nil
     ) {
@@ -160,6 +186,7 @@ final class TerminalSidebarStore: ObservableObject {
         self.workspaceMetadataService = workspaceMetadataService ?? TerminalConvexWorkspaceMetadataService()
         self.serverDiscovery = serverDiscovery
         self.networkPathMonitor = networkPathMonitor
+        self.remoteWorkspaceReadMarker = remoteWorkspaceReadMarker ?? ConvexTerminalRemoteWorkspaceReadMarker()
         self.eagerlyRestoreSessions = eagerlyRestoreSessions
         self.controllerFactory = controllerFactory ?? { workspace, host, credentialsStore, transportFactory in
             TerminalSessionController(
@@ -222,6 +249,65 @@ final class TerminalSidebarStore: ObservableObject {
         ensureBackendIdentityIfNeeded(for: workspace.id)
         startWorkspaceMetadataObservationIfNeeded(for: workspace.id)
         return workspace.id
+    }
+
+    @discardableResult
+    func openInboxWorkspace(_ item: UnifiedInboxItem) -> TerminalWorkspace.ID? {
+        guard item.kind == .workspace,
+              let machineID = item.machineID,
+              let tmuxSessionName = item.tmuxSessionName else {
+            return nil
+        }
+
+        let host = upsertRemoteHost(for: item, machineID: machineID)
+        let workspaceID: TerminalWorkspace.ID
+
+        if let existingIndex = workspaces.firstIndex(where: {
+            if item.workspaceID != nil, !$0.isRemoteWorkspace {
+                return false
+            }
+            return $0.remoteWorkspaceID == item.workspaceID ||
+                ($0.hostID == host.id && $0.tmuxSessionName == tmuxSessionName)
+        }) {
+            workspaces[existingIndex].hostID = host.id
+            workspaces[existingIndex].title = item.title
+            workspaces[existingIndex].tmuxSessionName = tmuxSessionName
+            workspaces[existingIndex].preview = item.preview
+            workspaces[existingIndex].lastActivity = item.sortDate
+            workspaces[existingIndex].unread = item.isUnread
+            workspaces[existingIndex].remoteWorkspaceID = item.workspaceID
+            workspaceID = workspaces[existingIndex].id
+            sortWorkspaces()
+        } else {
+            let workspace = TerminalWorkspace(
+                hostID: host.id,
+                title: item.title,
+                tmuxSessionName: tmuxSessionName,
+                preview: item.preview,
+                lastActivity: item.sortDate,
+                unread: item.isUnread,
+                remoteWorkspaceID: item.workspaceID
+            )
+            workspaces.insert(workspace, at: 0)
+            workspaceID = workspace.id
+        }
+
+        if item.isUnread {
+            Task { [remoteWorkspaceReadMarker] in
+                do {
+                    try await remoteWorkspaceReadMarker?.markRead(item: item)
+                } catch {
+                    #if DEBUG
+                    print("Failed to mark remote workspace read: \(error)")
+                    #endif
+                }
+            }
+        }
+
+        guard let workspace = self.workspace(with: workspaceID) else {
+            return nil
+        }
+        return openWorkspace(workspace)
     }
 
     @discardableResult
@@ -525,6 +611,46 @@ final class TerminalSidebarStore: ObservableObject {
         workspaces.sort { $0.lastActivity > $1.lastActivity }
     }
 
+    private func upsertRemoteHost(for item: UnifiedInboxItem, machineID: String) -> TerminalHost {
+        let resolvedName = item.accessoryLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hostName = (resolvedName?.isEmpty == false ? resolvedName : machineID) ?? machineID
+        let hostname = item.tailscaleHostname ??
+            item.tailscaleIPs.first ??
+            machineID
+
+        if let existingIndex = hosts.firstIndex(where: {
+            $0.stableID == machineID || $0.serverID == machineID
+        }) {
+            hosts[existingIndex].stableID = machineID
+            hosts[existingIndex].name = hostName
+            hosts[existingIndex].hostname = hostname
+            hosts[existingIndex].username = "cmux"
+            hosts[existingIndex].source = .discovered
+            hosts[existingIndex].transportPreference = .remoteDaemon
+            hosts[existingIndex].teamID = item.teamID
+            hosts[existingIndex].serverID = machineID
+            hosts[existingIndex].allowsSSHFallback = false
+            return hosts[existingIndex]
+        }
+
+        let host = TerminalHost(
+            stableID: machineID,
+            name: hostName,
+            hostname: hostname,
+            username: "cmux",
+            symbolName: "desktopcomputer",
+            palette: TerminalHostPalette.allCases[hosts.count % TerminalHostPalette.allCases.count],
+            sortIndex: hosts.count,
+            source: .discovered,
+            transportPreference: .remoteDaemon,
+            teamID: item.teamID,
+            serverID: machineID,
+            allowsSSHFallback: false
+        )
+        hosts.append(host)
+        return host
+    }
+
     private func observeWorkspaceMetadata() {
         for workspace in workspaces {
             startWorkspaceMetadataObservationIfNeeded(for: workspace.id)
@@ -535,6 +661,7 @@ final class TerminalSidebarStore: ObservableObject {
         guard workspaceIdentityTasks[workspaceID] == nil,
               let workspaceIdentityService,
               let workspace = workspace(with: workspaceID),
+              !workspace.isRemoteWorkspace,
               workspace.backendIdentity == nil,
               let host = server(for: workspace.hostID),
               let teamID = host.teamID?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1429,12 +1556,15 @@ private final class TerminalUITestDirectReconnectTransport: TerminalTransport, @
             guard let self else { return }
             if attempt == 1 {
                 self.eventHandler?(.connected)
-                try? await Task.sleep(for: .milliseconds(300))
+                self.eventHandler?(.output(Data("cmux@fixture:~$ ".utf8)))
+                try? await Task.sleep(for: .milliseconds(1_200))
                 guard !Task.isCancelled else { return }
                 self.eventHandler?(.disconnected(nil))
                 return
             }
 
+            try? await Task.sleep(for: .milliseconds(2_000))
+            guard !Task.isCancelled else { return }
             self.eventHandler?(.connected)
             self.eventHandler?(.output(Data("cmux@fixture:~$ ".utf8)))
         }

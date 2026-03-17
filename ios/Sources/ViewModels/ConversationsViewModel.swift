@@ -8,6 +8,7 @@ import ConvexMobile
 @MainActor
 class ConversationsViewModel: ObservableObject {
     @Published var conversations: [ConvexConversation] = []
+    @Published var inboxItems: [UnifiedInboxItem] = []
     @Published var isLoading = true
     @Published var error: String?
     @Published var isLoadingMore = false
@@ -16,9 +17,12 @@ class ConversationsViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var teamId: String?
     private let convex = ConvexClientManager.shared
+    private let inboxCacheRepository: InboxCacheRepository?
+    private let workspaceSyncService: UnifiedInboxWorkspaceSyncing?
     private var lastPrewarmAt: Date?
     private var firstPage: [ConvexConversation] = []
     private var extraConversations: [ConvexConversation] = []
+    private var workspaceInboxItems: [UnifiedInboxItem] = []
     private var continueCursor: String?
     private var lastLoadedCursor: String?
     private let pageSize: Double = 50
@@ -35,10 +39,24 @@ class ConversationsViewModel: ObservableObject {
         let index: Int
     }
 
-    init() {
-        // Start loading when auth is ready
-        Task {
-            await loadConversations()
+    init(
+        autoLoad: Bool = true,
+        inboxCacheRepository: InboxCacheRepository? = ConversationsViewModel.makeDefaultInboxCacheRepository(),
+        workspaceSyncService: UnifiedInboxWorkspaceSyncing? = nil
+    ) {
+        self.inboxCacheRepository = inboxCacheRepository
+        self.workspaceSyncService = workspaceSyncService ?? UnifiedInboxSyncService(
+            inboxCacheRepository: inboxCacheRepository
+        )
+        loadCachedState()
+        observeWorkspaceSync()
+
+        if autoLoad {
+            Task {
+                await loadConversations()
+            }
+        } else {
+            isLoading = false
         }
     }
 
@@ -103,10 +121,11 @@ class ConversationsViewModel: ObservableObject {
     func loadConversations() async {
         if UITestConfig.mockDataEnabled {
             conversations = UITestMockData.conversations()
-            isLoading = false
             error = nil
             hasMore = false
             isLoadingMore = false
+            rebuildInboxItems()
+            isLoading = false
             return
         }
         // Wait for auth with retry loop (up to 30 seconds)
@@ -140,6 +159,7 @@ class ConversationsViewModel: ObservableObject {
         self.hasMore = false
         self.isLoadingMore = false
         NSLog("📱 ConversationsViewModel: Using team \(teamId)")
+        workspaceSyncService?.connect(teamID: teamId)
 
         // Subscribe to conversations (paginated response)
         let paginationOpts = ConversationsListPagedWithLatestArgsPaginationOpts(
@@ -180,7 +200,7 @@ class ConversationsViewModel: ObservableObject {
                         self.hasMore = !page.isDone
                     }
                     self.conversations = self.mergeConversations(firstPage: page.page)
-                    self.updateAppBadge()
+                    self.rebuildInboxItems()
                     self.isLoading = false
                 }
             )
@@ -234,7 +254,7 @@ class ConversationsViewModel: ObservableObject {
                 hasMore = false
             }
             conversations = mergeConversations(firstPage: firstPage)
-            updateAppBadge()
+            rebuildInboxItems()
         } catch {
             NSLog("📱 ConversationsViewModel: Load more failed: \(error)")
         }
@@ -407,7 +427,7 @@ class ConversationsViewModel: ObservableObject {
     }
 
     private func updateAppBadge() {
-        let unreadCount = conversations.filter { $0.unread }.count
+        let unreadCount = inboxItems.filter(\.isUnread).count
         if unreadCount == lastBadgeCount {
             return
         }
@@ -430,7 +450,7 @@ class ConversationsViewModel: ObservableObject {
             entry.id == conversationId ? transform(entry) : entry
         }
         conversations = mergeConversations(firstPage: firstPage)
-        updateAppBadge()
+        rebuildInboxItems()
     }
 
     private func removeConversation(_ conversationId: String) -> RemovedConversation? {
@@ -446,7 +466,7 @@ class ConversationsViewModel: ObservableObject {
             }
         }
         conversations = mergeConversations(firstPage: firstPage)
-        updateAppBadge()
+        rebuildInboxItems()
         return removed
     }
 
@@ -473,7 +493,7 @@ class ConversationsViewModel: ObservableObject {
             }
         }
         conversations = mergeConversations(firstPage: firstPage)
-        updateAppBadge()
+        rebuildInboxItems()
     }
 
     private func getFirstTeamId() async -> String? {
@@ -539,6 +559,121 @@ class ConversationsViewModel: ObservableObject {
         let firstIds = Set(firstPage.map(\.id))
         let extras = extraConversations.filter { !firstIds.contains($0.id) }
         return firstPage + extras
+    }
+
+    private func rebuildInboxItems(persist: Bool = true) {
+        inboxItems = UnifiedInboxSyncService.merge(
+            conversations: conversations,
+            workspaceItems: workspaceInboxItems
+        )
+        if persist {
+            persistInboxItems()
+        }
+        updateAppBadge()
+    }
+
+    private func persistInboxItems() {
+        guard let inboxCacheRepository else { return }
+        do {
+            try inboxCacheRepository.save(inboxItems)
+        } catch {
+            NSLog("📱 ConversationsViewModel: Failed to persist inbox cache: \(error)")
+        }
+    }
+
+    private func loadCachedState() {
+        guard let inboxCacheRepository else { return }
+        do {
+            let cachedItems = try inboxCacheRepository.load()
+            workspaceInboxItems = cachedItems.filter { $0.kind == .workspace }
+            if cachedItems.isEmpty {
+                rebuildInboxItems(persist: false)
+            } else {
+                inboxItems = cachedItems
+                updateAppBadge()
+            }
+
+            if !inboxItems.isEmpty {
+                isLoading = false
+            }
+        } catch {
+            NSLog("📱 ConversationsViewModel: Failed to load inbox cache: \(error)")
+        }
+    }
+
+    private func observeWorkspaceSync() {
+        workspaceSyncService?.workspaceItemsPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] items in
+                guard let self else { return }
+                self.workspaceInboxItems = items
+                self.rebuildInboxItems()
+                self.isLoading = false
+            }
+            .store(in: &cancellables)
+    }
+
+    func conversation(for item: UnifiedInboxItem) -> ConvexConversation? {
+        guard let conversationID = item.conversationID else { return nil }
+        return conversations.first { $0.id == conversationID }
+    }
+
+    func workspaceItem(workspaceID: String, machineID: String?) -> UnifiedInboxItem? {
+        inboxItems.first { item in
+            guard item.kind == .workspace else { return false }
+            guard item.workspaceID == workspaceID else { return false }
+            if let machineID {
+                return item.machineID == machineID
+            }
+            return true
+        }
+    }
+
+    func markWorkspaceReadLocally(workspaceID: String) {
+        workspaceInboxItems = workspaceInboxItems.map { item in
+            guard item.workspaceID == workspaceID else { return item }
+            return UnifiedInboxItem(
+                kind: item.kind,
+                conversationID: item.conversationID,
+                workspaceID: item.workspaceID,
+                machineID: item.machineID,
+                teamID: item.teamID,
+                title: item.title,
+                preview: item.preview,
+                unreadCount: 0,
+                sortDate: item.sortDate,
+                accessoryLabel: item.accessoryLabel,
+                symbolName: item.symbolName,
+                tmuxSessionName: item.tmuxSessionName,
+                latestEventSeq: item.latestEventSeq,
+                lastReadEventSeq: item.latestEventSeq ?? item.lastReadEventSeq,
+                tailscaleHostname: item.tailscaleHostname,
+                tailscaleIPs: item.tailscaleIPs
+            )
+        }
+        rebuildInboxItems()
+    }
+
+    func receiveConversationPageForTesting(_ page: [ConvexConversation]) {
+        firstPage = page
+        extraConversations = []
+        conversations = mergeConversations(firstPage: page)
+        rebuildInboxItems()
+        isLoading = false
+    }
+
+    func replaceWorkspaceRowsForTesting(_ rows: [AppDatabase.WorkspaceInboxRow]) {
+        workspaceInboxItems = rows.map(UnifiedInboxItem.init(workspaceRow:))
+        rebuildInboxItems()
+    }
+
+    nonisolated private static func makeDefaultInboxCacheRepository() -> InboxCacheRepository? {
+        do {
+            return InboxCacheRepository(database: try AppDatabase.live())
+        } catch {
+            NSLog("📱 ConversationsViewModel: Failed to open default inbox cache: \(error)")
+            return nil
+        }
     }
 }
 

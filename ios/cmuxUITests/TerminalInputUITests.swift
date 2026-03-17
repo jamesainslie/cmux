@@ -2,7 +2,7 @@ import XCTest
 
 final class TerminalInputUITests: XCTestCase {
     private enum Fixture {
-        static let workspaceID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        static let typedPreview = "z"
     }
 
     override func setUp() {
@@ -22,13 +22,12 @@ final class TerminalInputUITests: XCTestCase {
         let detail = app.otherElements["terminal.workspace.detail"]
         XCTAssertTrue(detail.waitForExistence(timeout: 4), "Expected terminal workspace detail")
         detail.tap()
-        app.typeText("ls")
+        app.typeText(Fixture.typedPreview)
 
-        app.navigationBars["Input Fixture"].buttons.firstMatch.tap()
+        terminalBackButton(in: app, title: "Input Fixture").tap()
 
-        let preview = app.staticTexts["terminal.workspace.preview.\(Fixture.workspaceID)"]
-        XCTAssertTrue(preview.waitForExistence(timeout: 4), "Expected workspace preview")
-        XCTAssertEqual(preview.label, "ls")
+        let preview = app.staticTexts[Fixture.typedPreview]
+        XCTAssertTrue(preview.waitForExistence(timeout: 4), "Expected workspace preview to reflect typed input")
     }
 
     func testInputFixtureAccessoryTabUpdatesWorkspacePreview() {
@@ -48,10 +47,16 @@ final class TerminalInputUITests: XCTestCase {
         XCTAssertTrue(tabButton.waitForExistence(timeout: 4), "Expected tab accessory button")
         tabButton.tap()
 
-        app.navigationBars["Input Fixture"].buttons.firstMatch.tap()
+        terminalBackButton(in: app, title: "Input Fixture").tap()
 
-        let preview = app.staticTexts["terminal.workspace.preview.\(Fixture.workspaceID)"]
-        XCTAssertTrue(preview.waitForExistence(timeout: 4), "Expected workspace preview")
-        XCTAssertEqual(preview.label, "[TAB]")
+        let preview = app.staticTexts["[TAB]"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 4), "Expected workspace preview to reflect accessory tab")
+    }
+
+    private func terminalBackButton(in app: XCUIApplication, title: String) -> XCUIElement {
+        let navigationBar = app.navigationBars[title]
+        let backButton = navigationBar.buttons.matching(NSPredicate(format: "identifier != %@", "Reconnect")).firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 4), "Expected terminal back button")
+        return backButton
     }
 }

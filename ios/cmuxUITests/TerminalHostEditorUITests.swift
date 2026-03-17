@@ -11,18 +11,12 @@ final class TerminalHostEditorUITests: XCTestCase {
         app.launchEnvironment["CMUX_UITEST_TERMINAL_SETUP_FIXTURE"] = "1"
         app.launch()
 
-        let home = app.otherElements["terminal.home"]
-        XCTAssertTrue(home.waitForExistence(timeout: 6), "Expected terminal home to appear")
-
         let serverButton = app.buttons["terminal.server.cmux-setup"]
-        XCTAssertTrue(serverButton.waitForExistence(timeout: 4), "Expected setup fixture server pin")
+        XCTAssertTrue(serverButton.waitForExistence(timeout: 6), "Expected setup fixture server pin")
         serverButton.tap()
 
-        let editor = app.otherElements["terminal.hostEditor"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 4), "Expected host editor to appear")
-
         let hostnameField = app.textFields["terminal.hostEditor.hostname"]
-        XCTAssertTrue(hostnameField.waitForExistence(timeout: 2), "Expected hostname field")
+        XCTAssertTrue(hostnameField.waitForExistence(timeout: 4), "Expected hostname field")
         hostnameField.tap()
         hostnameField.typeText("cmux-macmini")
 

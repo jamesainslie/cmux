@@ -30,6 +30,69 @@ final class AppDatabase {
         }
     }
 
+    struct WorkspaceInboxRow: FetchableRecord, Equatable, Sendable {
+        let workspaceID: String
+        let machineID: String?
+        let teamID: String?
+        let title: String
+        let preview: String
+        let lastActivityAt: Date
+        let tmuxSessionName: String?
+        let latestEventSeq: Int
+        let lastReadEventSeq: Int
+        let machineDisplayName: String?
+        let tailscaleHostname: String?
+        let tailscaleIPs: [String]
+
+        init(
+            workspaceID: String,
+            machineID: String?,
+            teamID: String? = nil,
+            title: String,
+            preview: String,
+            lastActivityAt: Date,
+            tmuxSessionName: String? = nil,
+            latestEventSeq: Int,
+            lastReadEventSeq: Int,
+            machineDisplayName: String? = nil,
+            tailscaleHostname: String? = nil,
+            tailscaleIPs: [String] = []
+        ) {
+            self.workspaceID = workspaceID
+            self.machineID = machineID
+            self.teamID = teamID
+            self.title = title
+            self.preview = preview
+            self.lastActivityAt = lastActivityAt
+            self.tmuxSessionName = tmuxSessionName
+            self.latestEventSeq = latestEventSeq
+            self.lastReadEventSeq = lastReadEventSeq
+            self.machineDisplayName = machineDisplayName
+            self.tailscaleHostname = tailscaleHostname
+            self.tailscaleIPs = tailscaleIPs
+        }
+
+        init(row: Row) {
+            workspaceID = row["workspace_id"]
+            machineID = row["machine_id"]
+            teamID = row["team_id"]
+            title = row["title"]
+            preview = row["preview"]
+            lastActivityAt = Date(timeIntervalSince1970: row["last_activity_at"])
+            tmuxSessionName = row["tmux_session_name"]
+            latestEventSeq = row["latest_event_seq"]
+            lastReadEventSeq = row["last_read_event_seq"]
+            machineDisplayName = row["accessory_label"]
+            tailscaleHostname = row["tailscale_hostname"]
+            let tailscaleIPsJSON: String = row["tailscale_ips_json"]
+            tailscaleIPs = (try? JSONDecoder().decode([String].self, from: Data(tailscaleIPsJSON.utf8))) ?? []
+        }
+
+        var unreadCount: Int {
+            latestEventSeq > lastReadEventSeq ? 1 : 0
+        }
+    }
+
     private let dbQueue: DatabaseQueue
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -60,6 +123,9 @@ final class AppDatabase {
     func writeWorkspace(
         id: String,
         title: String,
+        preview: String = "",
+        machineID: String? = nil,
+        lastActivityAt: Date = .now,
         latestEventSeq: Int,
         lastReadEventSeq: Int
     ) throws {
@@ -70,6 +136,7 @@ final class AppDatabase {
                 INSERT INTO workspaces (
                     workspace_id,
                     host_id,
+                    machine_id,
                     title,
                     tmux_session_name,
                     preview,
@@ -79,8 +146,9 @@ final class AppDatabase {
                     latest_event_seq,
                     last_read_event_seq
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(workspace_id) DO UPDATE SET
+                    machine_id = excluded.machine_id,
                     title = excluded.title,
                     preview = excluded.preview,
                     last_activity_at = excluded.last_activity_at,
@@ -92,10 +160,11 @@ final class AppDatabase {
                 arguments: [
                     id,
                     UUID().uuidString,
+                    machineID,
                     title,
                     "cmux-\(id)",
-                    "",
-                    Date().timeIntervalSince1970,
+                    preview,
+                    lastActivityAt.timeIntervalSince1970,
                     isUnread,
                     TerminalConnectionPhase.idle.rawValue,
                     latestEventSeq,
@@ -120,6 +189,114 @@ final class AppDatabase {
                 """,
                 arguments: [id]
             )
+        }
+    }
+
+    func readWorkspaceInboxRows() throws -> [WorkspaceInboxRow] {
+        try dbQueue.read { db in
+            try WorkspaceInboxRow.fetchAll(
+                db,
+                sql: """
+                SELECT
+                    workspace_id,
+                    machine_id,
+                    NULL AS team_id,
+                    title,
+                    preview,
+                    last_activity_at,
+                    tmux_session_name,
+                    latest_event_seq,
+                    last_read_event_seq,
+                    NULL AS accessory_label,
+                    NULL AS tailscale_hostname,
+                    '[]' AS tailscale_ips_json
+                FROM workspaces
+                ORDER BY last_activity_at DESC
+                """
+            )
+        }
+    }
+
+    func readCachedInboxItems() throws -> [UnifiedInboxItem] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT
+                    item_id,
+                    kind,
+                    conversation_id,
+                    workspace_id,
+                    machine_id,
+                    team_id,
+                    title,
+                    preview,
+                    accessory_label,
+                    symbol_name,
+                    unread_count,
+                    sort_timestamp,
+                    tmux_session_name,
+                    latest_event_seq,
+                    last_read_event_seq,
+                    tailscale_hostname,
+                    tailscale_ips_json
+                FROM inbox_items
+                ORDER BY sort_timestamp DESC, item_id ASC
+                """
+            )
+
+            return try rows.map(decodeInboxItem(from:))
+        }
+    }
+
+    func replaceCachedInboxItems(_ items: [UnifiedInboxItem]) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM inbox_items")
+            for item in items {
+                try db.execute(
+                    sql: """
+                    INSERT INTO inbox_items (
+                        item_id,
+                        kind,
+                        conversation_id,
+                        workspace_id,
+                        machine_id,
+                        team_id,
+                        title,
+                        preview,
+                        accessory_label,
+                        symbol_name,
+                        unread_count,
+                        sort_timestamp,
+                        tmux_session_name,
+                        latest_event_seq,
+                        last_read_event_seq,
+                        tailscale_hostname,
+                        tailscale_ips_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        item.id,
+                        item.kind.rawValue,
+                        item.conversationID,
+                        item.workspaceID,
+                        item.machineID,
+                        item.teamID,
+                        item.title,
+                        item.preview,
+                        item.accessoryLabel,
+                        item.symbolName,
+                        item.unreadCount,
+                        item.sortDate.timeIntervalSince1970,
+                        item.tmuxSessionName,
+                        item.latestEventSeq,
+                        item.lastReadEventSeq,
+                        item.tailscaleHostname,
+                        try encodeJSONString(item.tailscaleIPs) ?? "[]",
+                    ]
+                )
+            }
         }
     }
 
@@ -181,6 +358,9 @@ final class AppDatabase {
         try dbQueue.write { db in
             try db.execute(sql: "DELETE FROM hosts")
             try db.execute(sql: "DELETE FROM workspaces")
+            let machineIDsByHostID = Dictionary(
+                uniqueKeysWithValues: snapshot.hosts.map { ($0.id, $0.effectiveServerID) }
+            )
 
             for host in snapshot.hosts {
                 try db.execute(
@@ -241,6 +421,8 @@ final class AppDatabase {
                     INSERT INTO workspaces (
                         workspace_id,
                         host_id,
+                        machine_id,
+                        remote_workspace_id,
                         title,
                         tmux_session_name,
                         preview,
@@ -254,11 +436,13 @@ final class AppDatabase {
                         latest_event_seq,
                         last_read_event_seq
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     arguments: [
                         workspace.id.uuidString,
                         workspace.hostID.uuidString,
+                        machineIDsByHostID[workspace.hostID],
+                        workspace.remoteWorkspaceID,
                         workspace.title,
                         workspace.tmuxSessionName,
                         workspace.preview,
@@ -392,6 +576,7 @@ final class AppDatabase {
             unread: row["unread"],
             phase: phase,
             lastError: row["last_error"],
+            remoteWorkspaceID: row["remote_workspace_id"],
             backendIdentity: try decodeJSON(
                 TerminalWorkspaceBackendIdentity.self,
                 from: row["backend_identity_json"]
@@ -404,6 +589,32 @@ final class AppDatabase {
                 TerminalRemoteDaemonResumeState.self,
                 from: row["remote_daemon_resume_state_json"]
             )
+        )
+    }
+
+    private func decodeInboxItem(from row: Row) throws -> UnifiedInboxItem {
+        let kindRaw: String = row["kind"]
+        guard let kind = UnifiedInboxKind(rawValue: kindRaw) else {
+            throw Error.invalidEnum(table: "inbox_items", column: "kind", value: kindRaw)
+        }
+
+        return UnifiedInboxItem(
+            kind: kind,
+            conversationID: row["conversation_id"],
+            workspaceID: row["workspace_id"],
+            machineID: row["machine_id"],
+            teamID: row["team_id"],
+            title: row["title"],
+            preview: row["preview"],
+            unreadCount: row["unread_count"],
+            sortDate: Date(timeIntervalSince1970: row["sort_timestamp"]),
+            accessoryLabel: row["accessory_label"],
+            symbolName: row["symbol_name"],
+            tmuxSessionName: row["tmux_session_name"],
+            latestEventSeq: row["latest_event_seq"],
+            lastReadEventSeq: row["last_read_event_seq"],
+            tailscaleHostname: row["tailscale_hostname"],
+            tailscaleIPs: try decodeJSON([String].self, from: row["tailscale_ips_json"]) ?? []
         )
     }
 

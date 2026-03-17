@@ -1,7 +1,10 @@
 import SwiftUI
 
+@MainActor
 struct ConversationListView: View {
-    @StateObject private var viewModel = ConversationsViewModel()
+    @StateObject private var viewModel: ConversationsViewModel
+    private let terminalStore: TerminalSidebarStore
+    @ObservedObject private var routeStore: NotificationRouteStore
     @State private var searchText = ""
     @State private var showSettings = false
     @State private var showNewTask = false
@@ -22,15 +25,26 @@ struct ConversationListView: View {
         isSearchFocused || !searchText.isEmpty || isSearchActive
     }
 
-    var filteredConversations: [ConvexConversation] {
+    private enum Destination: Hashable {
+        case conversation(String)
+        case workspace(TerminalWorkspace.ID)
+    }
+
+    init(
+        viewModel: ConversationsViewModel? = nil,
+        terminalStore: TerminalSidebarStore? = nil,
+        routeStore: NotificationRouteStore? = nil
+    ) {
+        _viewModel = StateObject(wrappedValue: viewModel ?? ConversationsViewModel())
+        self.terminalStore = terminalStore ?? TerminalSidebarRootView.makeLiveStore()
+        _routeStore = ObservedObject(wrappedValue: routeStore ?? NotificationRouteStore.shared)
+    }
+
+    var filteredInboxItems: [UnifiedInboxItem] {
         if searchText.isEmpty {
-            return viewModel.conversations
+            return viewModel.inboxItems
         }
-        return viewModel.conversations.filter {
-            $0.displayName.localizedCaseInsensitiveContains(searchText) ||
-            $0.providerDisplayName.localizedCaseInsensitiveContains(searchText) ||
-            $0.cwd.localizedCaseInsensitiveContains(searchText)
-        }
+        return viewModel.inboxItems.filter { $0.matches(query: searchText) }
     }
 
     var body: some View {
@@ -49,7 +63,7 @@ struct ConversationListView: View {
                             Task { await viewModel.loadConversations() }
                         }
                     }
-                } else if filteredConversations.isEmpty {
+                } else if filteredInboxItems.isEmpty {
                     ContentUnavailableView {
                         Label("No Tasks", systemImage: "tray")
                     } description: {
@@ -167,19 +181,34 @@ struct ConversationListView: View {
             .sheet(isPresented: $showNewTask) {
                 NewTaskSheet(viewModel: viewModel) { conversationId in
                     // Navigate to the new conversation
-                    navigationPath.append(conversationId)
+                    navigationPath.append(Destination.conversation(conversationId))
                 }
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
-            .navigationDestination(for: String.self) { conversationId in
-                // Navigate by conversation ID (from new task creation)
-                ChatViewById(conversationId: conversationId)
+            .navigationDestination(for: Destination.self) { destination in
+                switch destination {
+                case .conversation(let conversationId):
+                    ChatViewById(conversationId: conversationId)
+                case .workspace(let workspaceId):
+                    TerminalWorkspaceDestinationView(store: terminalStore, workspaceID: workspaceId)
+                }
             }
-            .onChange(of: filteredConversations.count) { _, _ in
-                guard uiTestAutoOpenConversation, !didAutoOpenConversation, let first = filteredConversations.first else { return }
+            .onChange(of: filteredInboxItems.count) { _, _ in
+                guard uiTestAutoOpenConversation, !didAutoOpenConversation else { return }
+                guard let first = filteredInboxItems.first(where: { $0.kind == .conversation }),
+                      let conversationId = first.conversationID else { return }
                 didAutoOpenConversation = true
-                navigationPath.append(first._id.rawValue)
+                navigationPath.append(Destination.conversation(conversationId))
+            }
+            .onAppear {
+                handlePendingRouteIfPossible()
+            }
+            .onChange(of: routeStore.pendingRoute) { _, _ in
+                handlePendingRouteIfPossible()
+            }
+            .onChange(of: viewModel.inboxItems) { _, _ in
+                handlePendingRouteIfPossible()
             }
         }
     }
@@ -189,51 +218,64 @@ struct ConversationListView: View {
 
     private var conversationsList: some View {
         List {
-            ForEach(filteredConversations) { conversation in
-                NavigationLink(destination: ChatView(conversation: conversation)) {
-                    ConversationRow(
-                        conversation: conversation,
-                        dotLeadingPadding: dotLeadingPadding,
-                        dotOffset: dotOffset
-                    )
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    Button(role: .destructive) {
-                        Task {
-                            await viewModel.deleteConversation(conversation)
-                        }
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-
-                    Button {
-                        Task {
-                            await viewModel.togglePin(conversation)
-                        }
-                    } label: {
-                        Label(
-                            conversation.conversation.pinned == true ? "Unpin" : "Pin",
-                            systemImage: conversation.conversation.pinned == true ? "pin.slash" : "pin"
+            ForEach(filteredInboxItems) { item in
+                if let conversation = viewModel.conversation(for: item) {
+                    NavigationLink(value: Destination.conversation(conversation.id)) {
+                        UnifiedInboxRow(
+                            item: item,
+                            dotLeadingPadding: dotLeadingPadding,
+                            dotOffset: dotOffset
                         )
                     }
-                    .tint(.orange)
-                }
-                .swipeActions(edge: .leading) {
-                    Button {
-                        Task {
-                            if conversation.unread {
-                                await viewModel.markRead(conversation)
-                            } else {
-                                await viewModel.markUnread(conversation)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            Task {
+                                await viewModel.deleteConversation(conversation)
                             }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
+
+                        Button {
+                            Task {
+                                await viewModel.togglePin(conversation)
+                            }
+                        } label: {
+                            Label(
+                                conversation.conversation.pinned == true ? "Unpin" : "Pin",
+                                systemImage: conversation.conversation.pinned == true ? "pin.slash" : "pin"
+                            )
+                        }
+                        .tint(.orange)
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            Task {
+                                if conversation.unread {
+                                    await viewModel.markRead(conversation)
+                                } else {
+                                    await viewModel.markUnread(conversation)
+                                }
+                            }
+                        } label: {
+                            Label(
+                                conversation.unread ? "Read" : "Unread",
+                                systemImage: conversation.unread ? "message" : "message.badge"
+                            )
+                        }
+                        .tint(.blue)
+                    }
+                } else {
+                    Button {
+                        openWorkspace(item)
                     } label: {
-                        Label(
-                            conversation.unread ? "Read" : "Unread",
-                            systemImage: conversation.unread ? "message" : "message.badge"
+                        UnifiedInboxRow(
+                            item: item,
+                            dotLeadingPadding: dotLeadingPadding,
+                            dotOffset: dotOffset
                         )
                     }
-                    .tint(.blue)
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -254,6 +296,28 @@ struct ConversationListView: View {
                 }
             }
         }
+    }
+    private func openWorkspace(_ item: UnifiedInboxItem) {
+        guard let workspaceID = terminalStore.openInboxWorkspace(item) else {
+            return
+        }
+        if let remoteWorkspaceID = item.workspaceID {
+            viewModel.markWorkspaceReadLocally(workspaceID: remoteWorkspaceID)
+        }
+        navigationPath.append(Destination.workspace(workspaceID))
+    }
+
+    private func handlePendingRouteIfPossible() {
+        guard let route = routeStore.pendingRoute else { return }
+        guard route.kind == .workspace else {
+            routeStore.consume()
+            return
+        }
+        guard let item = viewModel.workspaceItem(workspaceID: route.workspaceID, machineID: route.machineID) else {
+            return
+        }
+        routeStore.consume()
+        openWorkspace(item)
     }
 }
 
@@ -386,25 +450,25 @@ struct InstantFocusTextView: UIViewRepresentable {
     }
 }
 
-struct ConversationRow: View {
-    let conversation: ConvexConversation
+struct UnifiedInboxRow: View {
+    let item: UnifiedInboxItem
     let dotLeadingPadding: CGFloat
     let dotOffset: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(conversation.displayName)
+                Text(item.title)
                     .font(.headline)
 
                 Spacer()
 
-                Text(formatTimestamp(conversation.displayTimestamp))
+                Text(formatTimestamp(item.sortDate))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
-            Text(conversation.previewSubtitle)
+            Text(item.preview)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -414,12 +478,21 @@ struct ConversationRow: View {
             Circle()
                 .fill(Color(uiColor: .systemBlue))
                 .frame(width: 8, height: 8)
-                .opacity(conversation.unread ? 1 : 0)
+                .opacity(item.isUnread ? 1 : 0)
                 .offset(x: dotOffset)
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("conversation.row.\(conversation.displayName)")
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var accessibilityIdentifier: String {
+        switch item.kind {
+        case .conversation:
+            return "conversation.row.\(item.title)"
+        case .workspace:
+            return "workspace.row.\(item.workspaceID ?? item.id)"
+        }
     }
 
     func formatTimestamp(_ date: Date) -> String {
@@ -444,7 +517,6 @@ struct ConversationRow: View {
         }
     }
 }
-
 #Preview {
     ConversationListView()
 }

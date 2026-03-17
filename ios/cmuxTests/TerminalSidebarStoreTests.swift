@@ -398,6 +398,49 @@ final class TerminalSidebarStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenInboxWorkspaceCreatesRemoteWorkspaceAndMarksRead() async throws {
+        let readMarker = StubTerminalRemoteWorkspaceReadMarker()
+        let fixture = makeStore(
+            snapshot: TerminalStoreSnapshot(hosts: [], workspaces: [], selectedWorkspaceID: nil),
+            remoteWorkspaceReadMarker: readMarker
+        )
+        let item = UnifiedInboxItem(
+            kind: .workspace,
+            workspaceID: "workspace_123",
+            machineID: "machine_123",
+            teamID: "team_123",
+            title: "orb / cmux",
+            preview: "feature/dogfood-inbox",
+            unreadCount: 1,
+            sortDate: Date(timeIntervalSince1970: 20),
+            accessoryLabel: "Mac Mini",
+            symbolName: "terminal",
+            tmuxSessionName: "cmux-nightly",
+            latestEventSeq: 4,
+            lastReadEventSeq: 2,
+            tailscaleHostname: "cmux-macmini.tail",
+            tailscaleIPs: ["100.64.0.10"]
+        )
+
+        let workspaceID = try XCTUnwrap(fixture.store.openInboxWorkspace(item))
+
+        try await waitForCondition {
+            readMarker.items.count == 1
+        }
+
+        let host = try XCTUnwrap(fixture.store.hosts.first(where: { $0.serverID == "machine_123" }))
+        let workspace = try XCTUnwrap(fixture.store.workspace(with: workspaceID))
+
+        XCTAssertEqual(host.hostname, "cmux-macmini.tail")
+        XCTAssertEqual(host.transportPreference, .remoteDaemon)
+        XCTAssertEqual(workspace.remoteWorkspaceID, "workspace_123")
+        XCTAssertEqual(workspace.tmuxSessionName, "cmux-nightly")
+        XCTAssertEqual(fixture.store.selectedWorkspaceID, workspaceID)
+        XCTAssertFalse(workspace.unread)
+        XCTAssertEqual(readMarker.items.first?.workspaceID, "workspace_123")
+    }
+
+    @MainActor
     func testBellUpdatesSelectedWorkspaceActivityWithoutMarkingUnread() async throws {
         let host = TerminalHost(
             name: "Mac Mini",
@@ -1260,6 +1303,7 @@ final class TerminalSidebarStoreTests: XCTestCase {
         transportFactory: TerminalTransportFactory = DefaultTerminalTransportFactory(),
         workspaceIdentityService: StubTerminalWorkspaceIdentityService? = nil,
         workspaceMetadataService: StubTerminalWorkspaceMetadataService? = nil,
+        remoteWorkspaceReadMarker: TerminalRemoteWorkspaceReadMarking? = nil,
         networkPathMonitor: TerminalNetworkPathMonitoring? = nil,
         eagerlyRestoreSessions: Bool = false,
         controllerFactory: TerminalSessionControllerFactory? = nil
@@ -1289,6 +1333,7 @@ final class TerminalSidebarStoreTests: XCTestCase {
             workspaceMetadataService: workspaceMetadataService,
             serverDiscovery: nil,
             networkPathMonitor: networkPathMonitor,
+            remoteWorkspaceReadMarker: remoteWorkspaceReadMarker,
             eagerlyRestoreSessions: eagerlyRestoreSessions,
             controllerFactory: resolvedControllerFactory
         )
@@ -1370,5 +1415,14 @@ private final class StubTerminalWorkspaceMetadataService: TerminalWorkspaceMetad
 
     private func key(for identity: TerminalWorkspaceBackendIdentity) -> String {
         "\(identity.teamID):\(identity.taskRunID)"
+    }
+}
+
+@MainActor
+private final class StubTerminalRemoteWorkspaceReadMarker: TerminalRemoteWorkspaceReadMarking {
+    private(set) var items: [UnifiedInboxItem] = []
+
+    func markRead(item: UnifiedInboxItem) async throws {
+        items.append(item)
     }
 }
