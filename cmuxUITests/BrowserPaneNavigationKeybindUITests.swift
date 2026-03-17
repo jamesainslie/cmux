@@ -1028,13 +1028,8 @@ final class TerminalFontZoomShortcutUITests: XCTestCase {
         app.launchEnvironment["CMUX_SOCKET_ENABLE"] = "1"
         app.launchEnvironment["CMUX_UI_TEST_SOCKET_SANITY"] = "1"
         app.launch()
-        app.activate()
         XCTAssertTrue(
-            waitForCondition(timeout: 12.0) {
-                guard app.state != .runningForeground else { return true }
-                app.activate()
-                return app.state == .runningForeground
-            },
+            ensureForegroundAfterLaunch(app, timeout: 12.0),
             "Expected app to launch in foreground. state=\(app.state.rawValue)"
         )
 
@@ -1091,6 +1086,17 @@ final class TerminalFontZoomShortcutUITests: XCTestCase {
             return false
         }
         return matched ? resolvedPath : resolvedPath
+    }
+
+    private func ensureForegroundAfterLaunch(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        if app.wait(for: .runningForeground, timeout: timeout) {
+            return true
+        }
+        if app.state == .runningBackground {
+            app.activate()
+            return app.wait(for: .runningForeground, timeout: 6.0)
+        }
+        return false
     }
 
     private func waitForTerminalFocus(surfaceId: String, timeout: TimeInterval) -> Bool {
