@@ -73,7 +73,7 @@ struct TerminalServerCatalog {
                 sshAuthenticationMethod: existing.sshAuthenticationMethod,
                 teamID: host.teamID,
                 serverID: host.serverID,
-                allowsSSHFallback: host.allowsSSHFallback,
+                allowsSSHFallback: existing.allowsSSHFallback,
                 directTLSPins: host.directTLSPins
             )
         }

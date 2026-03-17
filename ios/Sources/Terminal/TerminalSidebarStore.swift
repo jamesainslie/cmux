@@ -636,7 +636,6 @@ final class TerminalSidebarStore: ObservableObject {
             hosts[existingIndex].transportPreference = .remoteDaemon
             hosts[existingIndex].teamID = item.teamID
             hosts[existingIndex].serverID = serverID
-            hosts[existingIndex].allowsSSHFallback = false
             return hosts[existingIndex]
         }
 
@@ -652,7 +651,7 @@ final class TerminalSidebarStore: ObservableObject {
             transportPreference: .remoteDaemon,
             teamID: item.teamID,
             serverID: serverID,
-            allowsSSHFallback: false
+            allowsSSHFallback: true
         )
         hosts.append(host)
         return host

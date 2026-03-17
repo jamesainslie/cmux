@@ -128,15 +128,7 @@ class ConversationsViewModel: ObservableObject {
             isLoading = false
             return
         }
-        // Wait for auth with retry loop (up to 30 seconds)
-        var attempts = 0
-        while !convex.isAuthenticated && attempts < 30 {
-            print("📱 ConversationsViewModel: Not authenticated, waiting... (attempt \(attempts + 1))")
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            attempts += 1
-        }
-
-        guard convex.isAuthenticated else {
+        guard await convex.waitUntilAuthenticated() else {
             print("📱 ConversationsViewModel: Auth timeout")
             error = "Authentication timeout"
             isLoading = false

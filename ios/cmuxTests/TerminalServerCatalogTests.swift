@@ -79,8 +79,44 @@ final class TerminalServerCatalogTests: XCTestCase {
         XCTAssertEqual(merged.first?.name, "Mac mini")
         XCTAssertEqual(merged.first?.teamID, "team-1")
         XCTAssertEqual(merged.first?.serverID, "cmux-macmini")
-        XCTAssertEqual(merged.first?.allowsSSHFallback, false)
+        XCTAssertEqual(merged.first?.allowsSSHFallback, true)
         XCTAssertEqual(merged.first?.directTLSPins, ["sha256:new-pin"])
+    }
+
+    func testMergePreservesExistingSSHFallbackPreference() {
+        let discovered = [
+            TerminalHost(
+                stableID: "cmux-macmini",
+                name: "Mac mini",
+                hostname: "cmux-macmini",
+                username: "cmux",
+                symbolName: "desktopcomputer",
+                palette: .mint,
+                source: .discovered,
+                transportPreference: .remoteDaemon,
+                teamID: "team-1",
+                serverID: "cmux-macmini",
+                allowsSSHFallback: true
+            )
+        ]
+
+        let local = [
+            TerminalHost(
+                stableID: "cmux-macmini",
+                name: "Mac mini",
+                hostname: "cmux-macmini",
+                username: "cmux",
+                symbolName: "desktopcomputer",
+                palette: .mint,
+                source: .custom,
+                transportPreference: .rawSSH,
+                allowsSSHFallback: false
+            )
+        ]
+
+        let merged = TerminalServerCatalog.merge(discovered: discovered, local: local)
+
+        XCTAssertEqual(merged.first?.allowsSSHFallback, false)
     }
 
     func testMergePreservesLocalSSHAuthenticationMethodForDiscoveredHosts() {

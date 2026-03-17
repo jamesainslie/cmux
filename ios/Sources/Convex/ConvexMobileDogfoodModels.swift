@@ -32,7 +32,7 @@ struct MobileMachineRow: Codable, Equatable, Sendable, Identifiable {
             transportPreference: .remoteDaemon,
             teamID: teamId,
             serverID: preferredServerID,
-            allowsSSHFallback: false
+            allowsSSHFallback: true
         )
     }
 

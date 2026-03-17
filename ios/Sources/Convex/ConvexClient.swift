@@ -52,13 +52,50 @@ class ConvexClientManager: ObservableObject {
         case .success(let authResult):
             print("📦 Convex: Auth sync SUCCESS for \(authResult.user.primaryEmail ?? "unknown")")
             print("📦 Convex: Token was passed to ffiClient.setAuth()")
-            // Give Convex a moment to process the token
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            print("📦 Convex: isAuthenticated = \(isAuthenticated)")
-            return "SUCCESS: \(authResult.user.primaryEmail ?? "unknown"), isAuth=\(isAuthenticated)"
+            let didAuthenticate = await waitUntilAuthenticated(timeout: .seconds(5))
+            print("📦 Convex: isAuthenticated = \(didAuthenticate)")
+            return "SUCCESS: \(authResult.user.primaryEmail ?? "unknown"), isAuth=\(didAuthenticate)"
         case .failure(let error):
             print("📦 Convex: Auth sync FAILED - \(error)")
             return "FAILED: \(error)"
+        }
+    }
+
+    func waitUntilAuthenticated(timeout: Duration = .seconds(30)) async -> Bool {
+        if isAuthenticated {
+            return true
+        }
+
+        let waitState = ConvexAuthWaitState()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let finish: @MainActor (Bool) -> Void = { value in
+                    guard !waitState.didResume else { return }
+                    waitState.didResume = true
+                    waitState.cancellable?.cancel()
+                    waitState.timeoutTask?.cancel()
+                    continuation.resume(returning: value)
+                }
+
+                waitState.cancellable = client.authState
+                    .receive(on: DispatchQueue.main)
+                    .sink { state in
+                        if case .authenticated = state {
+                            finish(true)
+                        }
+                    }
+
+                waitState.timeoutTask = Task {
+                    try? await ContinuousClock().sleep(for: timeout)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        finish(self.isAuthenticated)
+                    }
+                }
+            }
+        } onCancel: {
+            waitState.cancellable?.cancel()
+            waitState.timeoutTask?.cancel()
         }
     }
 
@@ -66,4 +103,10 @@ class ConvexClientManager: ObservableObject {
     func clearAuth() async {
         await client.logout()
     }
+}
+
+private final class ConvexAuthWaitState {
+    var cancellable: AnyCancellable?
+    var timeoutTask: Task<Void, Never>?
+    var didResume = false
 }
