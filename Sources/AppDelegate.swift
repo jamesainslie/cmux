@@ -2450,8 +2450,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - tmux Session Persistence
 
     private func startTmuxGatewayIfEnabled() {
+        #if DEBUG
+        dlog("tmux.startup checking enabled=\(SessionPersistenceMode.isTmuxEnabled) mode=\(SessionPersistenceMode.current.rawValue)")
+        #endif
         guard SessionPersistenceMode.isTmuxEnabled else { return }
 
+        #if DEBUG
+        dlog("tmux.startup creating gateway")
+        #endif
         let gateway = TmuxGateway()
         gateway.delegate = self
         self.tmuxGateway = gateway
@@ -2481,9 +2487,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         Task {
             do {
+                #if DEBUG
+                dlog("tmux.startup calling gateway.start()")
+                #endif
                 try await gateway.start()
+                #if DEBUG
+                dlog("tmux.startup gateway started successfully, state=\(gateway.state)")
+                #endif
                 NSLog("[AppDelegate] tmux gateway started")
             } catch {
+                #if DEBUG
+                dlog("tmux.startup gateway failed: \(error)")
+                #endif
                 NSLog("[AppDelegate] tmux gateway failed to start: \(error)")
                 self.tmuxGateway = nil
             }

@@ -33,12 +33,14 @@ final class TmuxGateway: ObservableObject {
         case serverExited(reason: String?)
         case commandFailed(message: String)
         case binaryNotFound
+        case serverStartFailed
         case timeout
 
         var errorDescription: String? {
             switch self {
             case .notConnected: return "Not connected to tmux server"
             case .serverExited(let reason): return "tmux server exited: \(reason ?? "unknown")"
+            case .serverStartFailed: return "Failed to start tmux server"
             case .commandFailed(let msg): return "tmux command failed: \(msg)"
             case .binaryNotFound: return "No suitable tmux binary found"
             case .timeout: return "tmux command timed out"
@@ -74,6 +76,8 @@ final class TmuxGateway: ObservableObject {
     private var process: Process?
     private var stdinPipe: Pipe?
     private var stdoutPipe: Pipe?
+    /// Primary (master) end of the PTY used for tmux control mode stdin.
+    private var ptyPrimaryHandle: FileHandle?
 
     /// Reader thread for stdout parsing.
     private var readerThread: Thread?
@@ -104,41 +108,96 @@ final class TmuxGateway: ObservableObject {
     /// If a tmux server is already running on the `cmux` socket, attaches as a new
     /// control mode client. Otherwise, starts a new server.
     func start() async throws {
+        #if DEBUG
+        NSLog("tmux.gateway.start state=\(state)")
+        #endif
         guard state == .idle || state == .disconnected(reason: nil) || {
             if case .disconnected = state { return true }
             return false
         }() else {
+            #if DEBUG
+            NSLog("tmux.gateway.start skipped, state=\(state)")
+            #endif
             return
         }
 
         state = .starting
 
         guard let resolution = TmuxBinaryResolver.resolve() else {
+            #if DEBUG
+            NSLog("tmux.gateway.start no binary found")
+            #endif
             state = .unavailable(reason: "No suitable tmux binary found (requires >= \(TmuxBinaryResolver.minimumVersion))")
             throw TmuxError.binaryNotFound
         }
 
         tmuxBinaryPath = resolution.path
+        #if DEBUG
+        NSLog("tmux.gateway.start resolved binary: \(resolution.path) v\(resolution.version) (\(resolution.source))")
+        #endif
         NSLog("[TmuxGateway] Using tmux \(resolution.version) from \(resolution.source): \(resolution.path)")
 
         let hasExistingServer = await checkServerRunning(at: resolution.path)
+        #if DEBUG
+        NSLog("tmux.gateway.start existingServer=\(hasExistingServer)")
+        #endif
+
+        // If no existing server, start one and create a session first.
+        // This must be separate from the control mode attach because
+        // tmux -CC requires a PTY on stdin (tcgetattr), so we can't
+        // combine new-session and -CC in one command with pipe I/O.
+        if !hasExistingServer {
+            let startProcess = Process()
+            startProcess.executableURL = URL(fileURLWithPath: resolution.path)
+            startProcess.arguments = ["-L", Self.socketName, "start-server"]
+            startProcess.standardOutput = FileHandle.nullDevice
+            startProcess.standardError = FileHandle.nullDevice
+            try startProcess.run()
+            startProcess.waitUntilExit()
+
+            let newSessionProcess = Process()
+            newSessionProcess.executableURL = URL(fileURLWithPath: resolution.path)
+            newSessionProcess.arguments = ["-L", Self.socketName, "new-session", "-d", "-s", "cmux"]
+            newSessionProcess.standardOutput = FileHandle.nullDevice
+            newSessionProcess.standardError = FileHandle.nullDevice
+            try newSessionProcess.run()
+            newSessionProcess.waitUntilExit()
+
+            guard newSessionProcess.terminationStatus == 0 else {
+                state = .unavailable(reason: "Failed to create tmux session (exit \(newSessionProcess.terminationStatus))")
+                throw TmuxError.serverStartFailed
+            }
+            #if DEBUG
+            NSLog("tmux.gateway.start created server and session")
+            #endif
+        }
+
+        // Allocate a PTY pair for the control mode client.
+        // tmux -CC requires a real terminal (calls tcgetattr on stdin),
+        // so we can't use bare pipes — we need a pseudo-terminal.
+        var primary: Int32 = -1
+        var secondary: Int32 = -1
+        guard openpty(&primary, &secondary, nil, nil, nil) == 0 else {
+            state = .unavailable(reason: "Failed to allocate PTY for tmux control mode")
+            throw TmuxError.serverStartFailed
+        }
+
+        let primaryHandle = FileHandle(fileDescriptor: primary, closeOnDealloc: true)
+        let secondaryHandle = FileHandle(fileDescriptor: secondary, closeOnDealloc: true)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: resolution.path)
+        process.arguments = ["-L", Self.socketName, "-CC", "attach"]
+        #if DEBUG
+        NSLog("tmux.gateway.start launching: \(resolution.path) \(process.arguments?.joined(separator: " ") ?? "")")
+        #endif
 
-        if hasExistingServer {
-            // Attach to existing server in control mode
-            process.arguments = ["-L", Self.socketName, "-CC", "attach"]
-        } else {
-            // Start new server + session in control mode
-            process.arguments = ["-L", Self.socketName, "-CC", "new-session", "-d", "-s", "cmux"]
-        }
-
-        let stdinPipe = Pipe()
+        // Use the secondary (slave) end as stdin so tmux sees a real TTY.
+        // stdout/stderr go to pipes so we can read control mode output.
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
 
-        process.standardInput = stdinPipe
+        process.standardInput = secondaryHandle
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
@@ -153,13 +212,16 @@ final class TmuxGateway: ObservableObject {
         do {
             try process.run()
         } catch {
+            close(primary)
+            close(secondary)
             state = .unavailable(reason: "Failed to launch tmux: \(error.localizedDescription)")
             throw error
         }
 
         self.process = process
-        self.stdinPipe = stdinPipe
+        self.stdinPipe = nil // We write commands via the primary PTY handle instead
         self.stdoutPipe = stdoutPipe
+        self.ptyPrimaryHandle = primaryHandle
 
         // Start reading stdout on a dedicated thread
         startReaderThread(fileHandle: stdoutPipe.fileHandleForReading)
@@ -287,9 +349,19 @@ final class TmuxGateway: ObservableObject {
 
     // MARK: - Command Infrastructure
 
+    /// Write a command string to the tmux control mode input (PTY or pipe).
+    private func writeCommand(_ commandLine: String) {
+        guard let data = commandLine.data(using: .utf8) else { return }
+        if let ptyHandle = ptyPrimaryHandle {
+            ptyHandle.write(data)
+        } else if let stdinPipe {
+            stdinPipe.fileHandleForWriting.write(data)
+        }
+    }
+
     /// Send a command and await its response (between %begin and %end).
     private func sendCommand(_ command: String) async throws -> [String] {
-        guard state == .connected, let stdinPipe else {
+        guard state == .connected, (ptyPrimaryHandle != nil || stdinPipe != nil) else {
             throw TmuxError.notConnected
         }
 
@@ -305,16 +377,14 @@ final class TmuxGateway: ObservableObject {
             )
             pendingCommands[commandNumber] = pending
 
-            let commandLine = "\(command)\n"
-            stdinPipe.fileHandleForWriting.write(commandLine.data(using: .utf8)!)
+            writeCommand("\(command)\n")
         }
     }
 
     /// Send a command without waiting for response (fire-and-forget).
     private func sendRawCommand(_ command: String) {
-        guard let stdinPipe, state == .connected else { return }
-        let commandLine = "\(command)\n"
-        stdinPipe.fileHandleForWriting.write(commandLine.data(using: .utf8)!)
+        guard state == .connected else { return }
+        writeCommand("\(command)\n")
     }
 
     // MARK: - Stdout Reader
@@ -464,6 +534,8 @@ final class TmuxGateway: ObservableObject {
         stdinPipe = nil
         stdoutPipe?.fileHandleForReading.closeFile()
         stdoutPipe = nil
+        ptyPrimaryHandle?.closeFile()
+        ptyPrimaryHandle = nil
 
         // Fail all pending commands
         let pending = pendingCommands
