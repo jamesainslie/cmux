@@ -538,19 +538,22 @@ extension Workspace {
         case .terminal:
             let workingDirectory = snapshot.terminal?.workingDirectory ?? snapshot.directory ?? currentDirectory
 
-            // tmux reattach: if the snapshot has a tmux pane ID and tmux persistence is enabled,
-            // try to reattach to the live tmux pane instead of replaying scrollback.
+            // tmux reattach: if the snapshot has tmux pane/window IDs and tmux persistence
+            // is enabled, create the panel in IO_MANUAL mode bound to the existing tmux pane.
+            // The gateway may not be connected yet (async startup), so we register in the
+            // pane registry when possible and rely on reconciliation to update TTY paths.
             if SessionPersistenceMode.isTmuxEnabled,
                let tmuxPaneId = snapshot.terminal?.tmuxPaneId,
-               let tmuxWindowId = snapshot.terminal?.tmuxWindowId,
-               let appDelegate = NSApplication.shared.delegate as? AppDelegate,
-               let gateway = appDelegate.tmuxGateway,
-               gateway.state == .connected {
+               let tmuxWindowId = snapshot.terminal?.tmuxWindowId {
+
+                let appDelegate = NSApplication.shared.delegate as? AppDelegate
+                let gateway = appDelegate?.tmuxGateway
+                let ttyPath = gateway?.paneRegistry.entry(forPaneId: tmuxPaneId)?.ttyPath
 
                 let tmuxBinding = TerminalSurface.TmuxPaneBinding(
                     paneId: tmuxPaneId,
                     windowId: tmuxWindowId,
-                    ttyPath: gateway.paneRegistry.entry(forPanelId: snapshot.id)?.ttyPath
+                    ttyPath: ttyPath
                 )
                 guard let terminalPanel = newTerminalSurface(
                     inPane: paneId,
@@ -560,12 +563,13 @@ extension Workspace {
                 ) else {
                     return nil
                 }
-                // Register in pane registry
-                gateway.paneRegistry.register(
+                // Register in pane registry (gateway may be nil/disconnected — that's OK,
+                // reconciliation on connect will find this pane by ID)
+                gateway?.paneRegistry.register(
                     panelId: terminalPanel.id,
                     windowId: tmuxWindowId,
                     paneId: tmuxPaneId,
-                    ttyPath: tmuxBinding.ttyPath,
+                    ttyPath: ttyPath,
                     workingDirectory: workingDirectory
                 )
                 applySessionPanelMetadata(snapshot, toPanelId: terminalPanel.id)
@@ -5113,19 +5117,45 @@ final class Workspace: Identifiable, ObservableObject {
         // Remove the default "Welcome" tab that bonsplit creates
         let welcomeTabIds = bonsplitController.allTabIds
 
-        // Create initial terminal panel
+        // Create initial terminal panel.
+        // When tmux session persistence is enabled, use IO_MANUAL mode with a pending
+        // binding. The real tmux window is created asynchronously after init.
+        let tmuxEnabled = SessionPersistenceMode.isTmuxEnabled
+        #if DEBUG
+        dlog("tmux.workspace.init id=\(id) tmuxEnabled=\(tmuxEnabled) mode=\(SessionPersistenceMode.current.rawValue)")
+        #endif
+        let initialTmuxBinding: TerminalSurface.TmuxPaneBinding? = tmuxEnabled
+            ? TerminalSurface.TmuxPaneBinding(paneId: "pending", windowId: "pending", ttyPath: nil)
+            : nil
         let terminalPanel = TerminalPanel(
             workspaceId: id,
             context: GHOSTTY_SURFACE_CONTEXT_TAB,
             configTemplate: configTemplate,
             workingDirectory: hasWorkingDirectory ? trimmedWorkingDirectory : nil,
             portOrdinal: portOrdinal,
-            initialCommand: initialTerminalCommand,
-            initialEnvironmentOverrides: initialTerminalEnvironment
+            initialCommand: initialTmuxBinding != nil ? nil : initialTerminalCommand,
+            initialEnvironmentOverrides: initialTerminalEnvironment,
+            tmuxBinding: initialTmuxBinding
         )
+        #if DEBUG
+        dlog("tmux.workspace.init panelId=\(terminalPanel.id) hasTmuxBinding=\(initialTmuxBinding != nil)")
+        #endif
         panels[terminalPanel.id] = terminalPanel
         panelTitles[terminalPanel.id] = terminalPanel.displayTitle
         seedTerminalInheritanceFontPoints(panelId: terminalPanel.id, configTemplate: configTemplate)
+
+        // Async: create the real tmux window for the initial panel.
+        // bindTmuxWindow has built-in retry logic — if the gateway isn't
+        // connected yet (async startup), it retries with 500ms delays.
+        // During session restore, the workspace may be replaced before the
+        // bind completes; the retry loop detects panel removal and aborts.
+        if initialTmuxBinding != nil {
+            let workDir = hasWorkingDirectory ? trimmedWorkingDirectory : nil
+            #if DEBUG
+            dlog("tmux.workspace.init scheduling bindTmuxWindow panelId=\(terminalPanel.id) workDir=\(workDir ?? "nil")")
+            #endif
+            bindTmuxWindow(toPanelId: terminalPanel.id, workingDirectory: workDir)
+        }
 
         // Create initial tab in bonsplit and store the mapping
         var initialTabId: TabID?
@@ -6494,13 +6524,24 @@ final class Workspace: Identifiable, ObservableObject {
 #endif
 
         // Create the new terminal panel.
+        // When tmux session persistence is enabled, create the panel in IO_MANUAL mode
+        // with a pending tmux binding. The real tmux window is created asynchronously
+        // and the binding is updated once ready.
+        let splitTmuxEnabled = SessionPersistenceMode.isTmuxEnabled
+        #if DEBUG
+        dlog("tmux.split tmuxEnabled=\(splitTmuxEnabled)")
+        #endif
+        let tmuxBinding: TerminalSurface.TmuxPaneBinding? = splitTmuxEnabled
+            ? TerminalSurface.TmuxPaneBinding(paneId: "pending", windowId: "pending", ttyPath: nil)
+            : nil
         let newPanel = TerminalPanel(
             workspaceId: id,
             context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
             configTemplate: inheritedConfig,
             workingDirectory: splitWorkingDirectory,
             portOrdinal: portOrdinal,
-            initialCommand: remoteTerminalStartupCommand
+            initialCommand: tmuxBinding != nil ? nil : remoteTerminalStartupCommand,
+            tmuxBinding: tmuxBinding
         )
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
@@ -6560,6 +6601,11 @@ final class Workspace: Identifiable, ObservableObject {
             )
         }
 
+        // Async: create the real tmux window and bind it to the new panel
+        if tmuxBinding != nil {
+            bindTmuxWindow(toPanelId: newPanel.id, workingDirectory: splitWorkingDirectory)
+        }
+
         return newPanel
     }
 
@@ -6579,8 +6625,21 @@ final class Workspace: Identifiable, ObservableObject {
         let previousFocusedPanelId = focusedPanelId
         let previousHostedView = focusedTerminalPanel?.hostedView
 
+        // Auto-inject pending tmux binding when tmux mode is enabled and no explicit binding
+        let effectiveBinding: TerminalSurface.TmuxPaneBinding?
+        if let tmuxBinding {
+            effectiveBinding = tmuxBinding
+        } else if SessionPersistenceMode.isTmuxEnabled {
+            effectiveBinding = TerminalSurface.TmuxPaneBinding(paneId: "pending", windowId: "pending", ttyPath: nil)
+        } else {
+            effectiveBinding = nil
+        }
+        #if DEBUG
+        dlog("tmux.newSurface tmuxEnabled=\(SessionPersistenceMode.isTmuxEnabled) hasExplicitBinding=\(tmuxBinding != nil) effectiveBinding=\(effectiveBinding != nil)")
+        #endif
+
         let inheritedConfig = inheritedTerminalConfig(inPane: paneId)
-        let remoteTerminalStartupCommand = tmuxBinding != nil ? nil : remoteTerminalStartupCommand()
+        let remoteTerminalStartupCommand = effectiveBinding != nil ? nil : remoteTerminalStartupCommand()
 
         // Create new terminal panel
         let newPanel = TerminalPanel(
@@ -6591,7 +6650,7 @@ final class Workspace: Identifiable, ObservableObject {
             portOrdinal: portOrdinal,
             initialCommand: remoteTerminalStartupCommand,
             additionalEnvironment: startupEnvironment,
-            tmuxBinding: tmuxBinding
+            tmuxBinding: effectiveBinding
         )
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
@@ -6635,6 +6694,12 @@ final class Workspace: Identifiable, ObservableObject {
                 previousHostedView: previousHostedView
             )
         }
+
+        // Async: create the real tmux window if we auto-injected a pending binding
+        if effectiveBinding != nil && tmuxBinding == nil {
+            bindTmuxWindow(toPanelId: newPanel.id, workingDirectory: workingDirectory)
+        }
+
         return newPanel
     }
 
@@ -6645,6 +6710,154 @@ final class Workspace: Identifiable, ObservableObject {
             return nil
         }
         return command
+    }
+
+    /// Asynchronously create a tmux window and bind it to an existing panel.
+    ///
+    /// Called after a panel is created with a "pending" tmux binding. Creates
+    /// the real tmux window, updates the surface binding with the real IDs,
+    /// and registers in the pane registry.
+    ///
+    /// If the gateway isn't connected yet (async startup), waits for the
+    /// `.tmuxGatewayReady` notification (with a 20-second timeout).
+    ///
+    /// - Parameters:
+    ///   - existingPane: If provided, reattach to this existing tmux pane instead of
+    ///     creating a new window. Used during session restore when a live pane matches.
+    func bindTmuxWindow(
+        toPanelId panelId: UUID,
+        workingDirectory: String?,
+        gateway: TmuxGateway? = nil,
+        existingPane: (windowId: String, paneId: String, ttyPath: String)? = nil
+    ) {
+        #if DEBUG
+        dlog("tmux.bind.start panelId=\(panelId) workDir=\(workingDirectory ?? "nil") gatewayProvided=\(gateway != nil) reattach=\(existingPane?.paneId ?? "nil")")
+        #endif
+        Task { @MainActor [weak self] in
+            guard let self else {
+                #if DEBUG
+                dlog("tmux.bind.abort panelId=\(panelId) reason=self-deallocated")
+                #endif
+                return
+            }
+            guard let panel = self.panels[panelId] as? TerminalPanel else {
+                #if DEBUG
+                dlog("tmux.bind.abort panelId=\(panelId) reason=panel-not-found panelCount=\(self.panels.count)")
+                #endif
+                return
+            }
+
+            // Try to get the gateway immediately; if not ready, wait for the ready notification.
+            var gw: TmuxGateway?
+            if let provided = gateway, provided.state == .connected {
+                gw = provided
+            } else if let appGateway = AppDelegate.shared?.tmuxGateway, appGateway.state == .connected {
+                gw = appGateway
+            } else {
+                #if DEBUG
+                dlog("tmux.bind.waiting panelId=\(panelId) for tmuxGatewayReady notification")
+                #endif
+                // Wait for gateway-ready notification with timeout
+                gw = await withCheckedContinuation { continuation in
+                    var observer: NSObjectProtocol?
+                    var timeoutTask: Task<Void, Never>?
+
+                    observer = NotificationCenter.default.addObserver(
+                        forName: .tmuxGatewayReady,
+                        object: nil,
+                        queue: .main
+                    ) { notification in
+                        timeoutTask?.cancel()
+                        if let obs = observer {
+                            NotificationCenter.default.removeObserver(obs)
+                        }
+                        continuation.resume(returning: notification.object as? TmuxGateway)
+                    }
+
+                    timeoutTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 20_000_000_000) // 20s timeout
+                        guard !Task.isCancelled else { return }
+                        if let obs = observer {
+                            NotificationCenter.default.removeObserver(obs)
+                        }
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
+
+            guard let gw, gw.state == .connected else {
+                #if DEBUG
+                dlog("tmux.bind.abort panelId=\(panelId) reason=gateway-unavailable")
+                #endif
+                return
+            }
+            guard let currentPanel = self.panels[panelId] as? TerminalPanel else {
+                #if DEBUG
+                dlog("tmux.bind.abort panelId=\(panelId) reason=panel-removed-during-wait")
+                #endif
+                return
+            }
+            // If another code path (registerUnboundTmuxPanels) already bound this
+            // panel to a real tmux window, don't create a second one.
+            if let existingBinding = currentPanel.surface.tmuxBinding,
+               existingBinding.paneId != "pending" {
+                #if DEBUG
+                dlog("tmux.bind.abort panelId=\(panelId) reason=already-bound paneId=\(existingBinding.paneId)")
+                #endif
+                return
+            }
+
+            do {
+                let result: (windowId: String, paneId: String, ttyPath: String?)
+                if let existing = existingPane {
+                    // Reattach to an existing tmux pane (session persistence)
+                    #if DEBUG
+                    dlog("tmux.bind.reattach panelId=\(panelId) paneId=\(existing.paneId) windowId=\(existing.windowId)")
+                    #endif
+                    result = (windowId: existing.windowId, paneId: existing.paneId, ttyPath: existing.ttyPath)
+                } else if let claimed = gw.claimInitialPane() {
+                    // Reattach to an unclaimed initial pane from gateway startup.
+                    // This avoids creating extra panes — the gateway already created
+                    // a session with pane(s), so the first bind(s) reuse them.
+                    #if DEBUG
+                    dlog("tmux.bind.claimInitial panelId=\(panelId) paneId=\(claimed.paneId) windowId=\(claimed.windowId)")
+                    #endif
+                    result = (windowId: claimed.windowId, paneId: claimed.paneId, ttyPath: claimed.ttyPath)
+                } else {
+                    // Create a new tmux window
+                    #if DEBUG
+                    dlog("tmux.bind.createWindow panelId=\(panelId) workDir=\(workingDirectory ?? "nil")")
+                    #endif
+                    result = try await gw.createWindow(workingDirectory: workingDirectory)
+                    #if DEBUG
+                    dlog("tmux.bind.createWindow.ok panelId=\(panelId) paneId=\(result.paneId) windowId=\(result.windowId) ttyPath=\(result.ttyPath ?? "nil")")
+                    #endif
+                }
+                let binding = TerminalSurface.TmuxPaneBinding(
+                    paneId: result.paneId,
+                    windowId: result.windowId,
+                    ttyPath: result.ttyPath
+                )
+                panel.surface.updateTmuxBinding(binding)
+                gw.paneRegistry.register(
+                    panelId: panelId,
+                    windowId: result.windowId,
+                    paneId: result.paneId,
+                    ttyPath: result.ttyPath,
+                    workingDirectory: workingDirectory
+                )
+                #if DEBUG
+                dlog("tmux.bind.complete panelId=\(panelId) paneId=\(result.paneId) windowId=\(result.windowId) ttyPath=\(result.ttyPath ?? "nil")")
+                #endif
+                // Invalidate the output cache so the next %output for this pane
+                // re-discovers the surface via findTmuxSurface.
+                AppDelegate.shared?.invalidateTmuxOutputCache(forPaneId: result.paneId)
+            } catch {
+                #if DEBUG
+                dlog("tmux.bind.error panelId=\(panelId) error=\(error)")
+                #endif
+            }
+        }
     }
 
     /// Create a new browser panel split

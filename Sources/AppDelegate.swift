@@ -2095,6 +2095,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private(set) var tmuxGateway: TmuxGateway?
     private var tmuxResizeObserver: NSObjectProtocol?
     private var tmuxSendKeysObserver: NSObjectProtocol?
+    /// Fast lookup cache: tmux paneId → TerminalSurface. Avoids O(n*m) search on every %output.
+    private var tmuxOutputCache: [String: WeakSurfaceRef] = [:]
     private var didInstallLifecycleSnapshotObservers = false
     private var didDisableSuddenTermination = false
     private var commandPaletteVisibilityByWindowId: [UUID: Bool] = [:]
@@ -2455,6 +2457,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         #endif
         guard SessionPersistenceMode.isTmuxEnabled else { return }
 
+        // Guard against duplicate gateway creation (configure() is called per window)
+        guard tmuxGateway == nil else {
+            #if DEBUG
+            dlog("tmux.startup skipping, gateway already exists state=\(tmuxGateway?.state ?? .disconnected(reason: nil))")
+            #endif
+            return
+        }
+
         #if DEBUG
         dlog("tmux.startup creating gateway")
         #endif
@@ -2481,8 +2491,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             queue: .main
         ) { [weak gateway] notification in
             guard let paneId = notification.userInfo?["paneId"] as? String,
-                  let text = notification.userInfo?["text"] as? String else { return }
-            gateway?.sendKeys(text, toPaneId: paneId)
+                  let data = notification.userInfo?["data"] as? Data else { return }
+            gateway?.sendKeys(data, toPaneId: paneId)
         }
 
         Task {
@@ -2495,6 +2505,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 dlog("tmux.startup gateway started successfully, state=\(gateway.state)")
                 #endif
                 NSLog("[AppDelegate] tmux gateway started")
+
+                // Reconcile persisted registry with live tmux state
+                await self.reconcileTmuxRegistry(gateway: gateway)
+
+                // Run initial setup: capture-pane for existing panes, then enable
+                // live notification delivery. This must happen AFTER reconciliation
+                // so that surfaces are wired and can receive initial content.
+                await gateway.runInitialSetup()
+
+                // Post gateway-ready notification for any bindTmuxWindow callers
+                // that are waiting for the gateway to be ready.
+                NotificationCenter.default.post(name: .tmuxGatewayReady, object: gateway)
             } catch {
                 #if DEBUG
                 dlog("tmux.startup gateway failed: \(error)")
@@ -2503,6 +2525,194 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 self.tmuxGateway = nil
             }
         }
+    }
+
+    /// Reconcile the persisted pane registry with live tmux state after connecting.
+    ///
+    /// Loads the saved registry, queries tmux for live panes, removes stale entries
+    /// (panes that no longer exist), and updates TTY paths for reattachable entries.
+    private func reconcileTmuxRegistry(gateway: TmuxGateway) async {
+        let registry = gateway.paneRegistry
+        let hadEntries = registry.load()
+
+        // Always query live panes — needed for both reconciliation and stale binding detection
+        var livePaneIds: Set<String> = []
+        var livePanes: [(windowId: String, paneId: String, ttyPath: String)] = []
+        do {
+            livePanes = try await gateway.listPanes()
+            livePaneIds = Set(livePanes.map(\.paneId))
+
+            if hadEntries {
+                let result = registry.reconcile(livePaneIds: livePaneIds)
+
+                #if DEBUG
+                dlog("tmux.reconcile reattachable=\(result.reattachable.count) stale=\(result.stalePanelIds.count) orphaned=\(result.orphanedPaneIds.count)")
+                #endif
+
+                // Update TTY paths for reattachable entries (may have changed across restarts)
+                for entry in result.reattachable {
+                    if let livePane = livePanes.first(where: { $0.paneId == entry.paneId }) {
+                        registry.updateTTYPath(livePane.ttyPath, forPanelId: entry.panelId)
+                    }
+                }
+
+                // Remove stale entries (tmux pane no longer exists)
+                registry.removeStaleEntries(result.stalePanelIds)
+
+                // Update TTY paths on surfaces that were restored before the gateway connected
+                updateRestoredTmuxSurfaces(gateway: gateway, livePanes: livePanes)
+
+                #if DEBUG
+                dlog("tmux.reconcile done: \(result.reattachable.count) reattachable, \(result.stalePanelIds.count) stale removed")
+                #endif
+            } else {
+                #if DEBUG
+                dlog("tmux.reconcile no persisted entries, skipping reconciliation")
+                #endif
+            }
+        } catch {
+            #if DEBUG
+            dlog("tmux.reconcile listPanes failed: \(error)")
+            #endif
+        }
+
+        // Always register unbound panels after gateway connects, regardless of
+        // persisted entries. Workspaces created during startup get pending bindings
+        // and need real tmux windows created for them. Also rebind panels whose
+        // tmux pane no longer exists (stale bindings from a previous session).
+        // Pass live pane info so pending panels can reattach to orphaned panes
+        // instead of always creating new windows.
+        registerUnboundTmuxPanels(gateway: gateway, livePaneIds: livePaneIds, livePanes: livePanes)
+    }
+
+    /// Update TTY paths on restored surfaces that have real tmux bindings,
+    /// and re-register panels in the registry with their current UUIDs.
+    ///
+    /// After session restore, panels have new UUIDs but the persisted registry
+    /// still references old UUIDs. We need to re-register each panel with its
+    /// current UUID so the output delivery cache can find it.
+    private func updateRestoredTmuxSurfaces(
+        gateway: TmuxGateway,
+        livePanes: [(windowId: String, paneId: String, ttyPath: String)]
+    ) {
+        let allTabManagers = mainWindowContexts.isEmpty
+            ? tabManager.map { [$0] } ?? []
+            : mainWindowContexts.values.map(\.tabManager)
+        guard !allTabManagers.isEmpty else { return }
+        let registry = gateway.paneRegistry
+        for tabManager in allTabManagers {
+            for tab in tabManager.tabs {
+                for (panelId, panel) in tab.panels {
+                    guard let termPanel = panel as? TerminalPanel,
+                          termPanel.surface.isTmuxBacked,
+                          let binding = termPanel.surface.tmuxBinding,
+                          binding.paneId != "pending" else { continue }
+
+                    if let livePane = livePanes.first(where: { $0.paneId == binding.paneId }) {
+                        termPanel.surface.updateTmuxTTYPath(livePane.ttyPath)
+
+                        // Re-register with the current panel UUID (session restore creates new UUIDs)
+                        registry.register(
+                            panelId: panelId,
+                            windowId: binding.windowId,
+                            paneId: binding.paneId,
+                            ttyPath: livePane.ttyPath,
+                            workingDirectory: tab.panelDirectories[panelId]
+                        )
+                        #if DEBUG
+                        dlog("tmux.reattach.reregister panelId=\(panelId) paneId=\(binding.paneId) windowId=\(binding.windowId)")
+                        #endif
+                    }
+                }
+            }
+        }
+        // Clear output cache since panel IDs changed
+        invalidateTmuxOutputCache()
+    }
+
+    /// Register any tmux-backed panels that need real tmux windows created.
+    ///
+    /// This covers two cases:
+    /// 1. Panels created with "pending" bindings before the gateway was available
+    /// 2. Panels with stale bindings whose tmux panes no longer exist
+    ///
+    /// - Parameters:
+    ///   - gateway: The connected tmux gateway
+    ///   - livePaneIds: Set of pane IDs that are currently live in tmux (from registry after reconciliation).
+    ///                  Panels whose binding references a pane NOT in this set are considered stale.
+    private func registerUnboundTmuxPanels(
+        gateway: TmuxGateway,
+        livePaneIds: Set<String>,
+        livePanes: [(windowId: String, paneId: String, ttyPath: String)] = []
+    ) {
+        // Collect all tab managers from all open windows.
+        // self.tabManager is the "active" window's manager and can be nil if no window
+        // has focus. mainWindowContexts covers all windows regardless of focus state.
+        let allTabManagers: [TabManager] = mainWindowContexts.isEmpty
+            ? tabManager.map { [$0] } ?? []
+            : mainWindowContexts.values.map(\.tabManager)
+        guard !allTabManagers.isEmpty else {
+            #if DEBUG
+            dlog("tmux.registerUnbound no tabManagers (no open windows)")
+            #endif
+            return
+        }
+        // Build a pool of orphaned panes (live in tmux but not in registry) that can
+        // be reattached to pending panels instead of creating new windows.
+        let registeredPaneIds = gateway.paneRegistry.allPaneIds
+        var orphanedPanes = livePanes.filter { !registeredPaneIds.contains($0.paneId) }
+
+        var found = 0
+        for tm in allTabManagers {
+            for tab in tm.tabs {
+                for (panelId, panel) in tab.panels {
+                    guard let termPanel = panel as? TerminalPanel,
+                          termPanel.surface.isTmuxBacked,
+                          let binding = termPanel.surface.tmuxBinding else { continue }
+
+                    let needsBind: Bool
+                    if binding.paneId == "pending" {
+                        needsBind = true
+                    } else if !livePaneIds.contains(binding.paneId) {
+                        // Stale binding — the tmux pane from a previous session no longer exists.
+                        // Reset to "pending" so bindTmuxWindow's already-bound guard doesn't fire.
+                        needsBind = true
+                        let pendingBinding = TerminalSurface.TmuxPaneBinding(
+                            paneId: "pending", windowId: "pending", ttyPath: nil
+                        )
+                        termPanel.surface.updateTmuxBinding(pendingBinding)
+                        #if DEBUG
+                        dlog("tmux.registerUnbound stale panelId=\(panelId) stalePaneId=\(binding.paneId) reset-to-pending")
+                        #endif
+                    } else {
+                        needsBind = false
+                    }
+
+                    guard needsBind else { continue }
+
+                    found += 1
+
+                    // Try to reattach to an orphaned pane instead of creating a new window.
+                    // This avoids creating unnecessary panes on relaunch when the tmux server
+                    // still has live panes from the previous session.
+                    let reattachPane = orphanedPanes.isEmpty ? nil : orphanedPanes.removeFirst()
+                    #if DEBUG
+                    dlog("tmux.registerUnbound panelId=\(panelId) workspaceId=\(tab.id) reattach=\(reattachPane?.paneId ?? "nil") scheduling bind")
+                    #endif
+                    let workingDirectory = tab.panelDirectories[panelId]
+                    tab.bindTmuxWindow(
+                        toPanelId: panelId,
+                        workingDirectory: workingDirectory,
+                        gateway: gateway,
+                        existingPane: reattachPane
+                    )
+                }
+            }
+        }
+        #if DEBUG
+        let totalTabs = allTabManagers.flatMap(\.tabs).count
+        dlog("tmux.registerUnbound windows=\(allTabManagers.count) totalTabs=\(totalTabs) pendingPanels=\(found)")
+        #endif
     }
 
     private func detachTmuxGateway() {
@@ -12258,39 +12468,132 @@ private extension NSWindow {
 
 // MARK: - TmuxGateway.Delegate
 
+/// Weak reference wrapper for caching TerminalSurface lookups.
+private struct WeakSurfaceRef {
+    weak var surface: TerminalSurface?
+}
+
 extension AppDelegate: TmuxGateway.Delegate {
     func tmuxGateway(_ gateway: TmuxGateway, didReceiveOutput data: Data, forPaneId paneId: String) {
-        // Find the panel registered for this tmux pane and deliver output
-        guard let entry = gateway.paneRegistry.entry(forPaneId: paneId) else { return }
-        guard let tabManager else { return }
+        // Fast path: check cache first
+        if let cached = tmuxOutputCache[paneId]?.surface {
+            cached.deliverTmuxOutput(data)
+            return
+        }
 
-        for tab in tabManager.tabs {
-            if let panel = tab.panels[entry.panelId] as? TerminalPanel {
-                panel.surface.deliverTmuxOutput(data)
-                return
+        // Notification gating ensures output only arrives after surfaces are wired,
+        // so no buffering is needed. Find the surface and cache it.
+        if let surface = findTmuxSurface(forPaneId: paneId, gateway: gateway) {
+            tmuxOutputCache[paneId] = WeakSurfaceRef(surface: surface)
+            surface.deliverTmuxOutput(data)
+            return
+        }
+
+        #if DEBUG
+        dlog("tmux.output.dropped paneId=\(paneId) bytes=\(data.count) (no surface)")
+        #endif
+    }
+
+    /// Search all tab managers for the surface bound to a tmux pane.
+    private func findTmuxSurface(forPaneId paneId: String, gateway: TmuxGateway?) -> TerminalSurface? {
+        guard let entry = gateway?.paneRegistry.entry(forPaneId: paneId) else { return nil }
+
+        // Collect all tab managers: active + all window contexts
+        var managers: [TabManager] = []
+        if let active = tabManager { managers.append(active) }
+        for ctx in mainWindowContexts.values {
+            let mgr = ctx.tabManager
+            if !managers.contains(where: { $0 === mgr }) { managers.append(mgr) }
+        }
+        guard !managers.isEmpty else { return nil }
+
+        // Exact panel ID lookup
+        for mgr in managers {
+            for tab in mgr.tabs {
+                if let panel = tab.panels[entry.panelId] as? TerminalPanel {
+                    return panel.surface
+                }
             }
         }
+        // Fallback: match by tmux pane ID (UUID mismatch after session restore)
+        for mgr in managers {
+            for tab in mgr.tabs {
+                for (_, panel) in tab.panels {
+                    guard let termPanel = panel as? TerminalPanel,
+                          termPanel.surface.tmuxBinding?.paneId == paneId else { continue }
+                    return termPanel.surface
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Invalidate the output cache for a specific pane (called on panel close/workspace change).
+    func invalidateTmuxOutputCache(forPaneId paneId: String? = nil) {
+        if let paneId {
+            tmuxOutputCache.removeValue(forKey: paneId)
+        } else {
+            tmuxOutputCache.removeAll()
+        }
+    }
+
+    func tmuxGateway(_ gateway: TmuxGateway, initialContent data: Data, forPaneId paneId: String) {
+        // Initial content from capture-pane during setup. Surfaces should already be
+        // wired at this point (called after reconciliation), so deliver directly.
+        if let cached = tmuxOutputCache[paneId]?.surface {
+            cached.deliverTmuxOutput(data)
+            return
+        }
+        if let surface = findTmuxSurface(forPaneId: paneId, gateway: gateway) {
+            tmuxOutputCache[paneId] = WeakSurfaceRef(surface: surface)
+            surface.deliverTmuxOutput(data)
+            return
+        }
+        #if DEBUG
+        dlog("tmux.initialContent.missed paneId=\(paneId) bytes=\(data.count)")
+        #endif
     }
 
     func tmuxGateway(_ gateway: TmuxGateway, windowAdded windowId: String) {
         // Window added externally (e.g., tmux command line) — could import as new panel
+        #if DEBUG
         NSLog("[TmuxDelegate] Window added: \(windowId)")
+        #endif
     }
 
     func tmuxGateway(_ gateway: TmuxGateway, windowClosed windowId: String) {
-        // Window closed externally — clean up registry entry
+        // Window closed externally — clean up registry and cache
         if let entry = gateway.paneRegistry.entry(forWindowId: windowId) {
+            invalidateTmuxOutputCache(forPaneId: entry.paneId)
             gateway.paneRegistry.unregister(panelId: entry.panelId)
         }
+        #if DEBUG
         NSLog("[TmuxDelegate] Window closed: \(windowId)")
+        #endif
     }
 
     func tmuxGatewayDidDisconnect(_ gateway: TmuxGateway, reason: String?) {
+        invalidateTmuxOutputCache()
         NSLog("[TmuxDelegate] Disconnected: \(reason ?? "clean")")
+
+        // Only show notification for unexpected disconnects (not clean detach)
+        guard let reason, reason != "detached" else { return }
+
+        // Notify the user via a terminal notification on the focused tab
+        if let notificationStore, let tabManager, let selectedTabId = tabManager.selectedTabId {
+            notificationStore.addNotification(
+                tabId: selectedTabId,
+                surfaceId: nil,
+                title: String(localized: "tmux.disconnect.title", defaultValue: "tmux session disconnected"),
+                subtitle: reason,
+                body: String(localized: "tmux.disconnect.body", defaultValue: "Terminal sessions backed by tmux are no longer receiving output. New terminals will use fresh shells.")
+            )
+        }
     }
 
     func tmuxGateway(_ gateway: TmuxGateway, paneModeChanged paneId: String) {
-        // Copy mode entered/exited — could update UI state
+        #if DEBUG
         NSLog("[TmuxDelegate] Pane mode changed: \(paneId)")
+        #endif
     }
 }

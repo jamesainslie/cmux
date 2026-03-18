@@ -35,6 +35,10 @@ final class TmuxPaneRegistry: ObservableObject {
     // MARK: - Registration
 
     /// Register a new panel ↔ tmux pane mapping.
+    ///
+    /// Removes any existing entry for the same tmux pane ID first, ensuring
+    /// one-to-one mapping between panels and tmux panes (important after
+    /// session restore where panel UUIDs change).
     func register(
         panelId: UUID,
         windowId: String,
@@ -42,6 +46,12 @@ final class TmuxPaneRegistry: ObservableObject {
         ttyPath: String? = nil,
         workingDirectory: String? = nil
     ) {
+        // Remove any stale entry with the same tmux pane ID but different panel UUID
+        let staleKeys = entries.filter { $0.key != panelId && $0.value.paneId == paneId }.map(\.key)
+        for key in staleKeys {
+            entries.removeValue(forKey: key)
+        }
+
         entries[panelId] = Entry(
             panelId: panelId,
             windowId: windowId,
@@ -49,6 +59,7 @@ final class TmuxPaneRegistry: ObservableObject {
             ttyPath: ttyPath,
             workingDirectory: workingDirectory
         )
+        save()
     }
 
     /// Update the TTY path for an existing entry (e.g., after querying tmux).
@@ -56,11 +67,13 @@ final class TmuxPaneRegistry: ObservableObject {
         guard var entry = entries[panelId] else { return }
         entry.ttyPath = ttyPath
         entries[panelId] = entry
+        save()
     }
 
     /// Remove a panel mapping (on panel close).
     func unregister(panelId: UUID) {
         entries.removeValue(forKey: panelId)
+        save()
     }
 
     // MARK: - Lookups
@@ -129,6 +142,9 @@ final class TmuxPaneRegistry: ObservableObject {
         for id in panelIds {
             entries.removeValue(forKey: id)
         }
+        if !panelIds.isEmpty {
+            save()
+        }
     }
 
     /// Remove all entries.
@@ -165,7 +181,8 @@ final class TmuxPaneRegistry: ObservableObject {
             let data = try Data(contentsOf: persistenceURL)
             let loadedEntries = try JSONDecoder().decode([Entry].self, from: data)
 
-            entries = Dictionary(uniqueKeysWithValues: loadedEntries.map { ($0.panelId, $0) })
+            // Use last-wins for duplicate panel UUIDs (shouldn't happen but be safe)
+            entries = Dictionary(loadedEntries.map { ($0.panelId, $0) }, uniquingKeysWith: { _, new in new })
             return !entries.isEmpty
         } catch {
             NSLog("[TmuxPaneRegistry] Failed to load: \(error)")

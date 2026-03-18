@@ -3165,10 +3165,9 @@ final class TerminalSurface: Identifiable, ObservableObject {
             surfaceConfig.io_write_cb = { userdata, buf, len in
                 guard let userdata, let buf else { return }
                 let surface = Unmanaged<TerminalSurface>.fromOpaque(userdata).takeUnretainedValue()
-                let data = Data(bytes: buf, count: Int(len))
-                DispatchQueue.main.async {
-                    surface.handleIOWrite(data)
-                }
+                // Called synchronously from Ghostty's key-event processing on the main thread.
+                // Write directly to the TTY without dispatching to avoid one async hop.
+                surface.handleIOWrite(buf: buf, len: Int(len))
             }
             surfaceConfig.io_write_userdata = Unmanaged.passUnretained(self).toOpaque()
         }
@@ -3484,43 +3483,29 @@ final class TerminalSurface: Identifiable, ObservableObject {
     }
 
     /// Handle keystrokes from the Ghostty surface's io_write_cb in IO_MANUAL mode.
-    /// Routes keystrokes directly to the tmux pane's TTY for minimal latency.
-    func handleIOWrite(_ data: Data) {
-        guard let binding = tmuxBinding, let ttyPath = binding.ttyPath else {
-            // Fallback: if no TTY path, use tmux send-keys (higher latency)
-            if let binding = tmuxBinding, let text = String(data: data, encoding: .utf8) {
-                // Access gateway via notification — avoid retaining TmuxGateway directly
-                NotificationCenter.default.post(
-                    name: .tmuxSendKeys,
-                    object: self,
-                    userInfo: ["paneId": binding.paneId, "text": text]
-                )
-            }
-            return
-        }
-
-        // Direct TTY write — bypasses tmux command parser for lowest latency.
-        DispatchQueue.global(qos: .userInteractive).async {
-            let fd = open(ttyPath, O_WRONLY | O_NONBLOCK)
-            guard fd >= 0 else { return }
-            defer { close(fd) }
-
-            data.withUnsafeBytes { buffer in
-                guard let ptr = buffer.baseAddress else { return }
-                var written = 0
-                let total = buffer.count
-                while written < total {
-                    let n = write(fd, ptr.advanced(by: written), total - written)
-                    if n <= 0 { break }
-                    written += n
-                }
-            }
-        }
+    /// Routes keystrokes to the tmux pane via send-keys.
+    /// Called synchronously from io_write_cb on the main thread.
+    func handleIOWrite(buf: UnsafeRawPointer, len: Int) {
+        guard len > 0, let binding = tmuxBinding, binding.paneId != "pending" else { return }
+        let data = Data(bytes: buf, count: len)
+        NotificationCenter.default.post(
+            name: .tmuxSendKeys,
+            object: self,
+            userInfo: ["paneId": binding.paneId, "data": data]
+        )
     }
 
     /// Update the tmux binding's TTY path (e.g., after querying tmux for pane details).
     func updateTmuxTTYPath(_ ttyPath: String) {
         tmuxBinding?.ttyPath = ttyPath
+    }
+
+    /// Replace the entire tmux binding (e.g., after async tmux window creation resolves).
+    func updateTmuxBinding(_ binding: TmuxPaneBinding) {
+        #if DEBUG
+        dlog("tmux.surface.updateBinding paneId=\(binding.paneId) windowId=\(binding.windowId) ttyPath=\(binding.ttyPath ?? "nil") previousPaneId=\(tmuxBinding?.paneId ?? "none")")
+        #endif
+        tmuxBinding = binding
     }
 
     /// Get the current terminal size in columns and rows (for tmux resize-pane).
@@ -6037,6 +6022,7 @@ extension Notification.Name {
     // tmux integration
     static let tmuxSendKeys = Notification.Name("tmuxSendKeys")
     static let tmuxPaneResized = Notification.Name("tmuxPaneResized")
+    static let tmuxGatewayReady = Notification.Name("tmuxGatewayReady")
 }
 
 // MARK: - Scroll View Wrapper (Ghostty-style scrollbar)

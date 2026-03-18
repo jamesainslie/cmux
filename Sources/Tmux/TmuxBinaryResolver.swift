@@ -45,7 +45,34 @@ enum TmuxBinaryResolver {
 
     // MARK: - Private
 
+    /// Well-known tmux install locations to check when `which` fails.
+    /// macOS GUI apps get a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin),
+    /// so Homebrew/MacPorts/Nix paths won't be found by `which`.
+    private static let wellKnownPaths = [
+        "/opt/homebrew/bin/tmux",     // Homebrew (Apple Silicon)
+        "/usr/local/bin/tmux",        // Homebrew (Intel) / manual installs
+        "/opt/local/bin/tmux",        // MacPorts
+        "/run/current-system/sw/bin/tmux",  // NixOS
+        "/nix/var/nix/profiles/default/bin/tmux",  // Nix single-user
+    ]
+
     private static func findSystemTmux() -> String? {
+        // 1. Try `which` first (works when PATH includes the binary)
+        if let path = findViaWhich() {
+            return path
+        }
+
+        // 2. Fall back to well-known paths (needed for GUI apps with minimal PATH)
+        for path in wellKnownPaths {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+
+        return nil
+    }
+
+    private static func findViaWhich() -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
         process.arguments = ["tmux"]
