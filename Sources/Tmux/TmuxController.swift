@@ -152,9 +152,9 @@ final class TmuxController: ObservableObject {
     // MARK: - Output Routing
 
     /// Route pane output data to the correct virtual surface.
-    /// Stub — full implementation in Phase 2 (Virtual Surface).
     func routeOutput(paneId: Int, data: Data) {
-        // Phase 2 will implement: paneToClient[paneId]?.feedOutput(data)
+        guard let client = paneToClient[paneId] as? TmuxPaneClient else { return }
+        client.feedOutput(data)
     }
 
     // MARK: - Input Routing
