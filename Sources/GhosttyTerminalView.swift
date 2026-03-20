@@ -2404,6 +2404,13 @@ class GhosttyApp {
                     }
                 }
             }
+        case GHOSTTY_ACTION_TMUX_CONTROL:
+            guard let surface = callbackContext?.terminalSurface else { return false }
+            let tmuxAction = action.action.tmux_control
+            return performOnMain {
+                TmuxGateway.handleGlobalAction(tmuxAction, surface: surface)
+                return true
+            }
         default:
             return false
         }

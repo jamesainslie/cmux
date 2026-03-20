@@ -4822,6 +4822,10 @@ final class Workspace: Identifiable, ObservableObject {
     @Published var customTitle: String?
     @Published var isPinned: Bool = false
     @Published var customColor: String?  // hex string, e.g. "#C0392B"
+
+    /// When true, this workspace is a tmux gateway and hidden from the sidebar.
+    /// Set by TmuxController on enter, cleared on detach/exit.
+    @Published var isBuriedGateway: Bool = false
     @Published var currentDirectory: String
     private(set) var preferredBrowserProfileID: UUID?
 

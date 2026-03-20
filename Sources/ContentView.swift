@@ -8106,7 +8106,8 @@ struct VerticalTabsSidebar: View {
     }
 
     var body: some View {
-        let workspaceCount = tabManager.tabs.count
+        let visibleTabs = tabManager.tabs.filter { !$0.isBuriedGateway }
+        let workspaceCount = visibleTabs.count
         let canCloseWorkspace = workspaceCount > 1
 
         VStack(spacing: 0) {
@@ -8118,7 +8119,7 @@ struct VerticalTabsSidebar: View {
                             .frame(height: trafficLightPadding)
 
                         LazyVStack(spacing: tabRowSpacing) {
-                            ForEach(Array(tabManager.tabs.enumerated()), id: \.element.id) { index, tab in
+                            ForEach(Array(visibleTabs.enumerated()), id: \.element.id) { index, tab in
                                 let selectedContextIds: Set<UUID> = selectedTabIds.contains(tab.id) ? selectedTabIds : [tab.id]
                                 let contextTargetIds = tabManager.tabs.compactMap { workspace in
                                     selectedContextIds.contains(workspace.id) ? workspace.id : nil
