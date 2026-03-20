@@ -2404,6 +2404,9 @@ class GhosttyApp {
         case GHOSTTY_ACTION_TMUX_CONTROL:
             guard let surface = callbackContext?.terminalSurface else { return false }
             let tmuxAction = action.action.tmux_control
+            #if DEBUG
+            dlog("[tmux] received action event=\(tmuxAction.event.rawValue) id=\(tmuxAction.id) data_len=\(tmuxAction.data_len)")
+            #endif
             return performOnMain {
                 TmuxGateway.handleGlobalAction(tmuxAction, surface: surface)
                 return true

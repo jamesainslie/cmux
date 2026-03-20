@@ -1,3 +1,4 @@
+import Bonsplit
 import Foundation
 import GhosttyKit
 
@@ -33,9 +34,15 @@ final class TmuxGateway {
         }
 
         guard let event = TmuxEvent.from(action) else {
+            #if DEBUG
+            dlog("[tmux.gateway] unrecognized event type=\(action.event.rawValue)")
+            #endif
             return
         }
 
+        #if DEBUG
+        dlog("[tmux.gateway] dispatching event=\(event) hasController=\(controller != nil)")
+        #endif
         controller?.handleEvent(event)
     }
 
@@ -106,6 +113,10 @@ final class TmuxGateway {
     ) {
         let panelId = surface.id
 
+        #if DEBUG
+        dlog("[tmux.global] action event=\(action.event.rawValue) panelId=\(panelId) data_len=\(action.data_len)")
+        #endif
+
         if action.event == GHOSTTY_TMUX_ENTER {
             // Create a new gateway and controller for this surface
             let gateway = TmuxGateway()
@@ -117,6 +128,9 @@ final class TmuxGateway {
             controller.gatewaySurface = surface
             controller.tabManager = AppDelegate.shared?.tabManager
             activeGateways[panelId] = gateway
+            #if DEBUG
+            dlog("[tmux.global] created controller id=\(controller.id) for panel=\(panelId) tabManager=\(controller.tabManager != nil)")
+            #endif
             gateway.handleAction(action, surface: surface)
             return
         }

@@ -1,3 +1,4 @@
+import Bonsplit
 import Foundation
 import GhosttyKit
 
@@ -52,6 +53,9 @@ enum TmuxEvent: Sendable {
             return .exit
         case GHOSTTY_TMUX_WINDOWS_CHANGED:
             guard let payload = try? JSONDecoder().decode(TmuxWindowsPayload.self, from: data) else {
+                #if DEBUG
+                dlog("[tmux.types] JSON decode failed for windows payload (\(data.count) bytes)")
+                #endif
                 return nil
             }
             return .windowsChanged(payload)
