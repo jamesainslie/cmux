@@ -126,22 +126,86 @@ final class TmuxController: ObservableObject {
     }
 
     /// Create or update native workspaces for the given tmux windows.
-    /// Stub — full implementation in Phase 3 (Layout Engine).
     func openWindows(_ windows: [TmuxWindow]) {
-        // Phase 3 will implement: diff against current windowToWorkspace,
-        // create new workspaces, remove closed ones, update layouts.
+        for window in windows {
+            if windowToWorkspace[window.id] == nil {
+                createWorkspaceForWindow(window)
+            }
+        }
+
+        // Remove workspaces for windows that no longer exist
+        let activeWindowIds = Set(windows.map(\.id))
+        for (windowId, _) in windowToWorkspace where !activeWindowIds.contains(windowId) {
+            removeWorkspaceForWindow(windowId)
+        }
     }
 
     private func handleLayoutChange(windowId: Int, layoutJSON: Data) {
-        // Phase 3: parse layout, diff against current, apply changes
+        guard let layout = try? JSONDecoder().decode(TmuxLayoutNode.self, from: layoutJSON),
+              let workspaceId = windowToWorkspace[windowId],
+              let workspace = tabManager?.tabs.first(where: { $0.id == workspaceId }) else {
+            return
+        }
+
+        // For now, store the layout. Full layout application happens in Phase 3.2.
+        _ = workspace
+        _ = layout
     }
 
     private func handleWindowAdd(windowId: Int) {
-        // Phase 3: create new workspace
+        // Phase 3 stub: would need window details (layout) to create workspace.
+        // The next windowsChanged event will include this window.
     }
 
     private func handleWindowClose(windowId: Int) {
-        // Phase 3: remove workspace
+        removeWorkspaceForWindow(windowId)
+    }
+
+    // MARK: - Workspace Management
+
+    /// Create a native workspace for a tmux window and register pane clients.
+    private func createWorkspaceForWindow(_ window: TmuxWindow) {
+        guard let tabManager else { return }
+
+        let workspace = tabManager.addWorkspace(
+            select: windowToWorkspace.isEmpty,  // Select first window only
+            autoWelcomeIfNeeded: false
+        )
+        workspace.isBuriedGateway = false  // tmux workspaces are visible
+        windowToWorkspace[window.id] = workspace.id
+
+        // Register pane clients for all panes in the layout
+        let paneIds = window.layout.allPaneIds
+        for paneId in paneIds {
+            let client = TmuxPaneClient(
+                tmuxPaneId: paneId,
+                tmuxWindowId: window.id,
+                tabId: workspace.id,
+                controller: self
+            )
+            paneToClient[paneId] = client
+        }
+    }
+
+    /// Remove the workspace and clean up clients for a closed tmux window.
+    private func removeWorkspaceForWindow(_ windowId: Int) {
+        guard let workspaceId = windowToWorkspace[windowId] else { return }
+
+        // Tear down pane clients for this window
+        for (paneId, clientObj) in paneToClient {
+            if let client = clientObj as? TmuxPaneClient, client.tmuxWindowId == windowId {
+                client.teardown()
+                paneToClient.removeValue(forKey: paneId)
+                paneToPanelId.removeValue(forKey: paneId)
+            }
+        }
+
+        // Remove workspace from tab manager
+        if let tabManager,
+           let index = tabManager.tabs.firstIndex(where: { $0.id == workspaceId }) {
+            tabManager.tabs.remove(at: index)
+        }
+
         windowToWorkspace.removeValue(forKey: windowId)
     }
 
