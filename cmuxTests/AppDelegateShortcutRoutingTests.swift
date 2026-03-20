@@ -6,7 +6,7 @@ import XCTest
 @testable import cmux
 #endif
 
-private let lastSurfaceCloseShortcutDefaultsKey = "closeWorkspaceOnLastSurfaceShortcut"
+// lastSurfaceCloseShortcutDefaultsKey defined in TabManagerUnitTests.swift
 
 @MainActor
 final class AppDelegateShortcutRoutingTests: XCTestCase {

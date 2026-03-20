@@ -13,22 +13,8 @@ import UserNotifications
 @testable import cmux
 #endif
 
-func drainMainQueue() {
-    let expectation = XCTestExpectation(description: "drain main queue")
-    DispatchQueue.main.async {
-        expectation.fulfill()
-    }
-    XCTWaiter().wait(for: [expectation], timeout: 1.0)
-}
-
-@MainActor
-func makeTemporaryBrowserProfile(named prefix: String) throws -> BrowserProfileDefinition {
-    try XCTUnwrap(
-        BrowserProfileStore.shared.createProfile(
-            named: "\(prefix)-\(UUID().uuidString)"
-        )
-    )
-}
+// drainMainQueue() defined in TabManagerUnitTests.swift
+// makeTemporaryBrowserProfile(named:) defined in WorkspaceUnitTests.swift
 
 final class BrowserPanelChromeBackgroundColorTests: XCTestCase {
     func testLightModeUsesThemeBackgroundColor() {

@@ -300,40 +300,6 @@ final class FocusFlashPatternTests: XCTestCase {
 
 
 @MainActor
-final class InternalTabDragConfigurationTests: XCTestCase {
-    func testDisablesExternalOperationsForInternalTabDrags() throws {
-        guard #available(macOS 26.0, *) else {
-            throw XCTSkip("Requires macOS 26 drag configuration APIs")
-        }
-
-        let configuration = InternalTabDragConfigurationProvider.value
-        let withinApp = try dragConfigurationOperationsSnapshot(from: configuration.operationsWithinApp)
-        let outsideApp = try dragConfigurationOperationsSnapshot(from: configuration.operationsOutsideApp)
-
-        XCTAssertEqual(
-            withinApp,
-            DragConfigurationOperationsSnapshot(
-                allowCopy: false,
-                allowMove: true,
-                allowDelete: false,
-                allowAlias: false
-            )
-        )
-
-        XCTAssertEqual(
-            outsideApp,
-            DragConfigurationOperationsSnapshot(
-                allowCopy: false,
-                allowMove: false,
-                allowDelete: false,
-                allowAlias: false
-            )
-        )
-    }
-}
-
-
-@MainActor
 final class InternalTabDragBundleDeclarationTests: XCTestCase {
     private func exportedTypeIdentifiers(bundle: Bundle) -> Set<String> {
         let declarations = (bundle.object(forInfoDictionaryKey: "UTExportedTypeDeclarations") as? [[String: Any]]) ?? []
@@ -353,7 +319,6 @@ final class InternalTabDragBundleDeclarationTests: XCTestCase {
         )
     }
 }
-#endif
 
 
 @MainActor
@@ -1080,3 +1045,4 @@ final class MarkdownPanelPointerObserverViewTests: XCTestCase {
         XCTAssertNil(overlay.hitTest(NSPoint(x: 40, y: 30)))
     }
 }
+#endif
