@@ -224,9 +224,11 @@ final class TmuxController: ObservableObject {
     // MARK: - Input Routing
 
     /// Send keystrokes to a tmux pane via the gateway.
-    /// Stub — full implementation in Phase 4 (Input Routing).
     func sendKeys(_ data: Data, toPane paneId: Int) {
-        // Phase 4 will implement: TmuxKeyEncoder.encode + gateway.sendCommand
+        let commands = TmuxKeyEncoder.encode(data, forPane: paneId)
+        for command in commands {
+            gateway.sendCommand(command)
+        }
     }
 
     // MARK: - Lifecycle

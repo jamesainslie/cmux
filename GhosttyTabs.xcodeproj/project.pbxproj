@@ -28,6 +28,7 @@
 		TM000003 /* TmuxController.swift in Sources */ = {isa = PBXBuildFile; fileRef = TM000013 /* TmuxController.swift */; };
 		TM000004 /* TmuxPaneClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = TM000014 /* TmuxPaneClient.swift */; };
 		TM000005 /* TmuxLayoutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = TM000015 /* TmuxLayoutEngine.swift */; };
+		TM000006 /* TmuxKeyEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = TM000016 /* TmuxKeyEncoder.swift */; };
 		A5001621 /* AppleScriptSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001620 /* AppleScriptSupport.swift */; };
 		A5001400 /* Panel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001410 /* Panel.swift */; };
 		A5001401 /* TerminalPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001411 /* TerminalPanel.swift */; };
@@ -199,6 +200,7 @@
 		TM000013 /* TmuxController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxController.swift; sourceTree = "<group>"; };
 		TM000014 /* TmuxPaneClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxPaneClient.swift; sourceTree = "<group>"; };
 		TM000015 /* TmuxLayoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxLayoutEngine.swift; sourceTree = "<group>"; };
+		TM000016 /* TmuxKeyEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tmux/TmuxKeyEncoder.swift; sourceTree = "<group>"; };
 		A5001620 /* AppleScriptSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleScriptSupport.swift; sourceTree = "<group>"; };
 			A5001510 /* CmuxWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Panels/CmuxWebView.swift; sourceTree = "<group>"; };
 			A5001511 /* UITestRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestRecorder.swift; sourceTree = "<group>"; };
@@ -461,6 +463,7 @@
 				TM000013 /* TmuxController.swift */,
 				TM000014 /* TmuxPaneClient.swift */,
 				TM000015 /* TmuxLayoutEngine.swift */,
+				TM000016 /* TmuxKeyEncoder.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -757,6 +760,7 @@
 				TM000003 /* TmuxController.swift in Sources */,
 				TM000004 /* TmuxPaneClient.swift in Sources */,
 				TM000005 /* TmuxLayoutEngine.swift in Sources */,
+				TM000006 /* TmuxKeyEncoder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
