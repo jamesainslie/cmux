@@ -198,6 +198,18 @@ extension TmuxLayoutNode: Codable {
     }
 }
 
+// MARK: - Session Persistence
+
+/// Metadata persisted in session snapshots for tmux workspaces.
+/// On restore, this is used to automatically reconnect to the tmux session.
+struct TmuxSessionInfo: Codable, Sendable {
+    /// The tmux session name (e.g., "main").
+    var sessionName: String
+
+    /// The command to reconnect (e.g., "tmux -CC attach -t main").
+    var connectionCommand: String
+}
+
 // MARK: - Layout Node Helpers
 
 extension TmuxLayoutNode {

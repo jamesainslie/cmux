@@ -67,6 +67,23 @@ final class TmuxController: ObservableObject {
         activeControllers.values.first { $0.gatewayPanelId == panelId }
     }
 
+    /// Find a controller by its ID.
+    static func controller(forId id: UUID) -> TmuxController? {
+        activeControllers[id]
+    }
+
+    /// Whether any tmux controller is currently connected.
+    static var hasActiveConnection: Bool {
+        activeControllers.values.contains { $0.connectionState == .connected }
+    }
+
+    /// Detach all active tmux connections.
+    static func detachAll() {
+        for controller in activeControllers.values where controller.connectionState == .connected {
+            controller.detach()
+        }
+    }
+
     // MARK: - Init
 
     init(gatewayPanelId: UUID, gateway: TmuxGateway) {
@@ -131,6 +148,10 @@ final class TmuxController: ObservableObject {
         if connectionState == .synchronizing {
             connectionState = .connected
             gateway.enableWrite()
+
+            // Persist our controller ID as a tmux session option for
+            // double-attach detection on future connections (spec SS5).
+            gateway.sendCommand("set-option -s @cmux_id \(id.uuidString)\n")
         }
     }
 
@@ -226,6 +247,7 @@ final class TmuxController: ObservableObject {
             autoWelcomeIfNeeded: false
         )
         workspace.isBuriedGateway = false  // tmux workspaces are visible
+        workspace.tmuxControllerId = id
         windowToWorkspace[window.id] = workspace.id
 
         // Register pane clients for all panes in the layout

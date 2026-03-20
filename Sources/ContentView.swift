@@ -8159,7 +8159,8 @@ struct VerticalTabsSidebar: View {
                                     dropIndicator: $dropIndicator,
                                     remoteContextMenuWorkspaceIds: remoteContextMenuTargets.map(\.id),
                                     allRemoteContextMenuTargetsConnecting: !remoteContextMenuTargets.isEmpty && remoteContextMenuTargets.allSatisfy { $0.remoteConnectionState == .connecting },
-                                    allRemoteContextMenuTargetsDisconnected: !remoteContextMenuTargets.isEmpty && remoteContextMenuTargets.allSatisfy { $0.remoteConnectionState == .disconnected }
+                                    allRemoteContextMenuTargetsDisconnected: !remoteContextMenuTargets.isEmpty && remoteContextMenuTargets.allSatisfy { $0.remoteConnectionState == .disconnected },
+                                    isTmuxWorkspace: tab.tmuxControllerId != nil
                                 )
                                 .equatable()
                             }
@@ -10520,7 +10521,8 @@ private struct TabItemView: View, Equatable {
         lhs.showsModifierShortcutHints == rhs.showsModifierShortcutHints &&
         lhs.remoteContextMenuWorkspaceIds == rhs.remoteContextMenuWorkspaceIds &&
         lhs.allRemoteContextMenuTargetsConnecting == rhs.allRemoteContextMenuTargetsConnecting &&
-        lhs.allRemoteContextMenuTargetsDisconnected == rhs.allRemoteContextMenuTargetsDisconnected
+        lhs.allRemoteContextMenuTargetsDisconnected == rhs.allRemoteContextMenuTargetsDisconnected &&
+        lhs.isTmuxWorkspace == rhs.isTmuxWorkspace
     }
 
     // Use plain references instead of @EnvironmentObject to avoid subscribing
@@ -10548,6 +10550,7 @@ private struct TabItemView: View, Equatable {
     let remoteContextMenuWorkspaceIds: [UUID]
     let allRemoteContextMenuTargetsConnecting: Bool
     let allRemoteContextMenuTargetsDisconnected: Bool
+    let isTmuxWorkspace: Bool
     @State private var isHovering = false
     @State private var rowHeight: CGFloat = 1
     @AppStorage(ShortcutHintDebugSettings.sidebarHintXKey) private var sidebarShortcutHintXOffset = ShortcutHintDebugSettings.defaultSidebarHintX
@@ -10815,6 +10818,18 @@ private struct TabItemView: View, Equatable {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(activeSecondaryColor(0.8))
+                }
+
+                if isTmuxWorkspace {
+                    Text(String(localized: "sidebar.tmux.badge", defaultValue: "tmux"))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(activeSecondaryColor(0.9))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(activeSecondaryColor(0.15))
+                        )
                 }
 
                 Text(tab.title)
