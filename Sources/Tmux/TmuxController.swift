@@ -48,6 +48,15 @@ final class TmuxController: ObservableObject {
     /// Incremented when sending select-window to ignore the resulting notification.
     private var ignoreWindowChangeNotificationCount: Int = 0
 
+    /// Outstanding resize commands to suppress echoed layout changes.
+    private var outstandingResizeCount: Int = 0
+
+    /// Debounce timer for resize commands.
+    private var resizeDebounceTimer: DispatchWorkItem?
+
+    /// Minimum interval between resize commands (100ms).
+    private static let resizeDebounceInterval: TimeInterval = 0.1
+
     // MARK: - Global Registry
 
     /// All active tmux controllers indexed by their ID.
@@ -141,15 +150,60 @@ final class TmuxController: ObservableObject {
     }
 
     private func handleLayoutChange(windowId: Int, layoutJSON: Data) {
-        guard let layout = try? JSONDecoder().decode(TmuxLayoutNode.self, from: layoutJSON),
-              let workspaceId = windowToWorkspace[windowId],
-              let workspace = tabManager?.tabs.first(where: { $0.id == workspaceId }) else {
+        // Suppress echoed layout changes from our own resize commands
+        if outstandingResizeCount > 0 {
+            outstandingResizeCount -= 1
             return
         }
 
-        // For now, store the layout. Full layout application happens in Phase 3.2.
-        _ = workspace
-        _ = layout
+        guard let layout = try? JSONDecoder().decode(TmuxLayoutNode.self, from: layoutJSON),
+              let workspaceId = windowToWorkspace[windowId],
+              tabManager?.tabs.first(where: { $0.id == workspaceId }) != nil else {
+            return
+        }
+
+        // Apply layout changes to the workspace
+        _ = layout  // Full Bonsplit application in future iteration
+    }
+
+    // MARK: - Resize
+
+    /// Send a resize command to tmux for the given window, debounced.
+    func resizeWindow(_ windowId: Int, width: Int, height: Int) {
+        resizeDebounceTimer?.cancel()
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.outstandingResizeCount += 1
+            self.sendResizeCommand(windowId: windowId, width: width, height: height)
+        }
+        resizeDebounceTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.resizeDebounceInterval, execute: work)
+    }
+
+    /// Send the version-appropriate resize command.
+    private func sendResizeCommand(windowId: Int, width: Int, height: Int) {
+        if versionAtLeast("3.4") {
+            // tmux >= 3.4: per-window refresh-client
+            gateway.sendCommand("refresh-client -C @\(windowId):\(width)x\(height)\n")
+        } else {
+            // tmux 2.9-3.3: resize-window
+            gateway.sendCommand("resize-window -x \(width) -y \(height) -t @\(windowId)\n")
+        }
+    }
+
+    /// Check if the connected tmux version is at least the given version.
+    private func versionAtLeast(_ minimum: String) -> Bool {
+        let current = tmuxVersion.components(separatedBy: CharacterSet(charactersIn: ".-abcdefghijklmnopqrstuvwxyz"))
+        let target = minimum.components(separatedBy: CharacterSet(charactersIn: ".-"))
+
+        for i in 0..<max(current.count, target.count) {
+            let c = i < current.count ? (Int(current[i]) ?? 0) : 0
+            let t = i < target.count ? (Int(target[i]) ?? 0) : 0
+            if c > t { return true }
+            if c < t { return false }
+        }
+        return true
     }
 
     private func handleWindowAdd(windowId: Int) {
@@ -210,7 +264,11 @@ final class TmuxController: ObservableObject {
     }
 
     private func handleWindowRenamed(windowId: Int, name: String) {
-        // Phase 7: update workspace title in sidebar
+        guard let workspaceId = windowToWorkspace[windowId],
+              let workspace = tabManager?.tabs.first(where: { $0.id == workspaceId }) else {
+            return
+        }
+        workspace.title = name
     }
 
     // MARK: - Output Routing
@@ -247,7 +305,15 @@ final class TmuxController: ObservableObject {
     private func teardown() {
         connectionState = .disconnected
 
+        resizeDebounceTimer?.cancel()
+        resizeDebounceTimer = nil
+
         unburyGatewayWorkspace()
+
+        // Tear down all pane clients
+        for (_, clientObj) in paneToClient {
+            (clientObj as? TmuxPaneClient)?.teardown()
+        }
 
         // Clean up entity maps
         paneToClient.removeAll()
