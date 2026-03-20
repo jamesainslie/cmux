@@ -198,6 +198,29 @@ extension TmuxLayoutNode: Codable {
     }
 }
 
+// MARK: - Version-Gated Capabilities (spec SS14)
+
+/// Feature capabilities gated by the connected tmux server version.
+struct TmuxCapabilities {
+    private let versionCheck: (String) -> Bool
+
+    init(versionCheck: @escaping (String) -> Bool) {
+        self.versionCheck = versionCheck
+    }
+
+    /// Pause mode (tmux >= 3.2): `refresh-client -f pause-after=N`
+    var supportsPauseMode: Bool { versionCheck("3.2") }
+
+    /// Variable window sizes (tmux >= 2.9): `resize-window`
+    var supportsVariableWindowSize: Bool { versionCheck("2.9") }
+
+    /// Per-window refresh-client (tmux >= 3.4): `refresh-client -C @wid:WxH`
+    var supportsPerWindowRefreshClient: Bool { versionCheck("3.4") }
+
+    /// Subscriptions for pane title changes (tmux >= 3.2)
+    var supportsSubscriptions: Bool { versionCheck("3.2") }
+}
+
 // MARK: - Session Persistence
 
 /// Metadata persisted in session snapshots for tmux workspaces.

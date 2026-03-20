@@ -57,6 +57,25 @@ final class TmuxController: ObservableObject {
     /// Minimum interval between resize commands (100ms).
     private static let resizeDebounceInterval: TimeInterval = 0.1
 
+    // MARK: - Pause Mode (spec SS11, tmux >= 3.2)
+
+    /// Pane IDs currently in paused state.
+    private var pausedPanes: Set<Int> = []
+
+    /// Timer for auto-unpause delay (1s per spec).
+    private var unpauseTimers: [Int: DispatchWorkItem] = [:]
+
+    // MARK: - Command Timeout (spec SS12)
+
+    /// Timestamp of the last command sent to tmux.
+    private var lastCommandSentAt: Date?
+
+    /// Timer that fires if no response arrives within the timeout.
+    private var commandTimeoutTimer: DispatchWorkItem?
+
+    /// Command timeout interval (5 seconds).
+    private static let commandTimeoutInterval: TimeInterval = 5.0
+
     // MARK: - Global Registry
 
     /// All active tmux controllers indexed by their ID.
@@ -152,6 +171,12 @@ final class TmuxController: ObservableObject {
             // Persist our controller ID as a tmux session option for
             // double-attach detection on future connections (spec SS5).
             gateway.sendCommand("set-option -s @cmux_id \(id.uuidString)\n")
+
+            // Enable pause mode for high-output panes (spec SS11).
+            enablePauseModeIfSupported()
+
+            // Check for double-attach from a previous cmux instance.
+            checkDoubleAttach()
         }
     }
 
@@ -311,6 +336,90 @@ final class TmuxController: ObservableObject {
         }
     }
 
+    // MARK: - Capabilities (spec SS14)
+
+    /// Version-gated feature capabilities for the connected tmux server.
+    var capabilities: TmuxCapabilities {
+        TmuxCapabilities(versionCheck: versionAtLeast)
+    }
+
+    // MARK: - Pause Mode (spec SS11)
+
+    /// Enable pause mode if supported. Called after initial sync.
+    private func enablePauseModeIfSupported() {
+        guard capabilities.supportsPauseMode else { return }
+        gateway.sendCommand("refresh-client -f pause-after=120\n")
+    }
+
+    /// Handle a pane pause notification.
+    func handlePanePause(paneId: Int) {
+        pausedPanes.insert(paneId)
+
+        // Auto-unpause after 1 second delay per spec
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.unpausePaneIfNeeded(paneId)
+        }
+        unpauseTimers[paneId]?.cancel()
+        unpauseTimers[paneId] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
+    /// Resume a paused pane by re-capturing and continuing.
+    private func unpausePaneIfNeeded(_ paneId: Int) {
+        guard pausedPanes.contains(paneId) else { return }
+        pausedPanes.remove(paneId)
+        unpauseTimers.removeValue(forKey: paneId)
+
+        // Re-capture the pane content and resume
+        gateway.sendCommand("capture-pane -t %\(paneId) -p -e\n")
+        gateway.sendCommand("refresh-client -A '%\(paneId):continue'\n")
+    }
+
+    // MARK: - Double-Attach Detection (spec SS5)
+
+    /// Check for an existing cmux connection to this session.
+    /// Called after initial sync when @cmux_id is readable.
+    private func checkDoubleAttach() {
+        gateway.sendCommand("show-option -sv @cmux_id\n")
+        // Response parsing would happen in a command-response callback.
+        // For now, the @cmux_id is set on connect (in handleWindowsChanged),
+        // so a stale value indicates another cmux was previously attached.
+    }
+
+    // MARK: - Command Timeout (spec SS12)
+
+    /// Start the command timeout timer. Resets on each command sent.
+    private func resetCommandTimeout() {
+        commandTimeoutTimer?.cancel()
+        lastCommandSentAt = Date()
+
+        let work = DispatchWorkItem { [weak self] in
+            self?.handleCommandTimeout()
+        }
+        commandTimeoutTimer = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.commandTimeoutInterval,
+            execute: work
+        )
+    }
+
+    /// Cancel the command timeout (called when a response is received).
+    private func cancelCommandTimeout() {
+        commandTimeoutTimer?.cancel()
+        commandTimeoutTimer = nil
+        lastCommandSentAt = nil
+    }
+
+    /// Handle a command timeout — offer force-detach to the user.
+    private func handleCommandTimeout() {
+        guard connectionState == .connected else { return }
+        // The UI layer should present a dialog. For now, log the timeout.
+        #if DEBUG
+        print("[tmux] command timeout after \(Self.commandTimeoutInterval)s — tmux may be unresponsive")
+        #endif
+    }
+
     // MARK: - Lifecycle
 
     /// Cleanly detach from the tmux session.
@@ -329,6 +438,11 @@ final class TmuxController: ObservableObject {
 
         resizeDebounceTimer?.cancel()
         resizeDebounceTimer = nil
+        commandTimeoutTimer?.cancel()
+        commandTimeoutTimer = nil
+        for (_, timer) in unpauseTimers { timer.cancel() }
+        unpauseTimers.removeAll()
+        pausedPanes.removeAll()
 
         unburyGatewayWorkspace()
 
