@@ -13,8 +13,22 @@ import UserNotifications
 @testable import cmux
 #endif
 
-// drainMainQueue() defined in TabManagerUnitTests.swift
-// makeTemporaryBrowserProfile(named:) defined in WorkspaceUnitTests.swift
+private func drainBrowserPanelMainQueue() {
+    let expectation = XCTestExpectation(description: "drain main queue")
+    DispatchQueue.main.async {
+        expectation.fulfill()
+    }
+    XCTWaiter().wait(for: [expectation], timeout: 1.0)
+}
+
+@MainActor
+private func makeTemporaryBrowserPanelProfile(named prefix: String) throws -> BrowserProfileDefinition {
+    try XCTUnwrap(
+        BrowserProfileStore.shared.createProfile(
+            named: "\(prefix)-\(UUID().uuidString)"
+        )
+    )
+}
 
 final class BrowserPanelChromeBackgroundColorTests: XCTestCase {
     func testLightModeUsesThemeBackgroundColor() {
@@ -93,7 +107,7 @@ final class BrowserPanelOmnibarPillBackgroundColorTests: XCTestCase {
 @MainActor
 final class BrowserPanelProfileIsolationTests: XCTestCase {
     func testStaleDidFinishDoesNotRecordVisitIntoSwitchedProfileHistory() throws {
-        let alternateProfile = try makeTemporaryBrowserProfile(named: "Switched")
+        let alternateProfile = try makeTemporaryBrowserPanelProfile(named: "Switched")
         let defaultStore = BrowserHistoryStore.shared
         let alternateStore = BrowserProfileStore.shared.historyStore(for: alternateProfile.id)
         defaultStore.clearHistory()
@@ -123,7 +137,7 @@ final class BrowserPanelProfileIsolationTests: XCTestCase {
         alternateStore.clearHistory()
 
         staleDelegate.webView?(staleWebView, didFinish: nil)
-        drainMainQueue()
+        drainBrowserPanelMainQueue()
 
         XCTAssertTrue(
             defaultStore.entries.isEmpty,
